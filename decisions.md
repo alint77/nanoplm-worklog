@@ -192,6 +192,28 @@ while our base runs AdamW at `1e-5` plain. Left alone, the optimizer
 comparison would also have been a weight-decay comparison. Both are now 1e-5,
 cautious off.
 
+## MoE is compared at matched active parameters
+
+Not matched total parameters.
+
+Why: at equal active parameters the comparison is at equal compute per token,
+which is what a wall-clock-matched study measures. Total parameters vary
+between cells and that is expected and reported.
+
+Concretely `top_k x expert_intermediate = 2688`, so every cell has the dense
+base's 8,257,536 active MLP parameters per layer.
+
+The control is dense *swiglu*, not the geglu base, because `use_moe=true`
+refuses geglu. That is why tier 2b runs after 2a.
+
+## mHC-lite is tested at both placements
+
+DSv4 and GLM 5.3 Flash apply it per sublayer; nanoplm defaults to per layer
+boundary. Rather than pick, both run.
+
+No code change needed: `mhc_lite_wrapping_level` already accepts
+`layer | sublayers`.
+
 ## TE fused RoPE: built, measured, reverted
 
 Why: it works and it is about 2x faster at the kernel level, but the step time

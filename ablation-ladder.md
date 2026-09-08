@@ -223,20 +223,25 @@ Runs after 2a and before 2c, because we expect to ship both and the question is
 how to configure them, not whether to use them. These are small grids, not
 single arms.
 
-**MoE.** Sparsity and granularity:
+**MoE. Matched ACTIVE parameters** (decided). Every cell has the same active
+MLP parameters per layer as the dense base, 8,257,536, so the comparison is at
+equal compute per token and total parameters vary.
 
-| axis | key | values |
-|---|---|---|
-| sparsity | `moe_num_experts` / `moe_top_k` | 2 settings |
-| granularity | expert width (`intermediate_size` per expert) | 2 settings |
+Matched-active means `top_k x expert_intermediate = 2688`. Granularity is how
+finely the same active width is split; sparsity is how many experts it is
+chosen from.
 
-OPEN QUESTION, needed before this runs: is MoE compared at **matched active
-params** or **matched total params**? They give different answers and the paper
-has to say which. This is not something we can pick for you.
+| cell | granularity g | expert `intermediate_size` | `moe_top_k` | sparsity E/k | `moe_num_experts` |
+|---|---|---|---|---|---|
+| G4-S4 | 4 | 672 | 4 | 4 | 16 |
+| G4-S8 | 4 | 672 | 4 | 8 | 32 |
+| G8-S4 | 8 | 336 | 8 | 4 | 32 |
+| G8-S8 | 8 | 336 | 8 | 8 | 64 |
 
-Two known issues to handle: quack GEMM rejects bf16 so eval falls back to
-cutlass, and the CUTLASS grouped-GEMM JIT has a multi-rank build race, so
-prebuild the `.so` before `srun`.
+**The control is dense swiglu, not the geglu base.** `use_moe=true` requires
+`mlp_activation` in `{swiglu, srelu}` (`config.py:432`), so an MoE arm run
+against the geglu base would differ in two things at once. 2b runs after 2a, so
+the swiglu arm A2 supplies the matched control at the same LR.
 
 **Canon layers.** `canon_layers_mode` x `canon_layer_set`.
 
@@ -257,7 +262,8 @@ each arm's best LR, counted in the budget.
 | C2 | x0 lambdas | `use_x0_lambdas` |
 | C3 | ProRes | `use_prores` |
 | C4 | paired-head attention | `use_paired_head_attention` |
-| C5 | mHC-lite | `use_mhc_lite` (SEE NOTE) |
+| C5a | mHC-lite, layer boundary | `use_mhc_lite` + `mhc_lite_wrapping_level: layer` |
+| C5b | mHC-lite, sublayers | `use_mhc_lite` + `mhc_lite_wrapping_level: sublayers` |
 | C6 | NOBLE | `use_noble` |
 | C7 | Loopie | `use_loopie` |
 | C8 | Huginn recycling | `use_huginn_looping` |
@@ -272,10 +278,14 @@ the ordinary mixed-precision path every other weight takes, not the
 building the model under a real 1-rank FSDP2 with `MixedPrecisionPolicy` and
 printing the dtypes.
 
-**NOTE on C5 (mHC-lite).** DSv4 and GLM 5.3 Flash apply it at the *sublayer*
-level, attention and MLP separately. nanoplm applies it once per *layer*
-boundary. So this arm as written does not test what those papers tested. Settle
-the placement before running it; it probably wants its own issue on nanoplm.
+**C5a vs C5b (mHC-lite placement).** DSv4 and GLM 5.3 Flash apply it at the
+*sublayer* level, attention and MLP separately; nanoplm defaults to once per
+*layer* boundary. Both are tested rather than assumed.
+
+No code change needed:
+`mhc_lite_wrapping_level: Literal["layer", "sublayers"] = "layer"` already
+exists (`config.py:127`), and the config refuses a non-default level unless
+`use_mhc_lite` is on, so the two arms cannot be mis-specified silently.
 
 MoE and canon layers moved to their own tier, 2b, which runs before this one.
 
@@ -322,12 +332,12 @@ A win that does not survive the scale-up does not go in the paper.
 | 2a | 33 | 11 arms x 3 LRs |
 
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set |
-| 2c | 24 | 8 arms x 3 LRs |
-| 2c seeds | 8 | second seed on our own ideas |
+| 2c | 27 | 9 arms x 3 LRs |
+| 2c seeds | 9 | second seed on our own ideas |
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~125** | **~12,000 GPU-hours** |
+| **total** | **~130** | **~12,500 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.
