@@ -350,9 +350,13 @@ If it does not, we ship the model that is 1B parameters smaller for free.
 
 The control is dense swiglu (arm A2 from 2a), not the geglu base.
 
-Two known issues to handle: quack GEMM rejects bf16 so eval falls back to
-cutlass, and the CUTLASS grouped-GEMM JIT has a multi-rank build race, so
-prebuild the `.so` before `srun`.
+One known issue to handle: the CUTLASS grouped-GEMM JIT has a multi-rank
+build race, so prebuild the `.so` before `srun`.
+
+The old "quack GEMM rejects bf16 so eval falls back to cutlass" note is stale.
+That was fixed in `38621fa` (2026-09-02): eval casts `Wi`/`Wo` to bf16 at load
+and `moe.py` casts the activations in and back out. `_force_cutlass_moe_backend`
+is gone, so sonicmoe checkpoints evaluate on the sonicmoe path.
 
 **Canon layers.** `canon_layers_mode` x `canon_layer_set`.
 
