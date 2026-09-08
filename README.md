@@ -7,6 +7,7 @@ Decisions, findings, and the ablation plan for the protein-LM paper.
 - `ablation-ladder.md` - the plan, for review
 - `prereg.md` - the rules, fixed before any arm runs
 - `env.md` - pinned versions and where things live
+- `results-tier0b.md` - global batch size probe
 
 Series root (all runs, logs, traces, checkpoints):
 `/e/fscratch/profound/naeimitabiei1/sep07_abl/`
