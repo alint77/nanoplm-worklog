@@ -253,10 +253,10 @@ the local batch shrinks, GEMMs get smaller and utilisation drops. That is an
 argument about the eventual full-scale run, and it is arithmetic rather than
 something to measure.
 
-## TE's sync-free grouped GEMM is Blackwell-only, not a CUDA version thing
+## TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
-is exactly what a MoE dispatch wants. They are unusable here:
+is exactly what a MoE dispatch wants. In the TE we run they are unusable:
 
     common/gemm/cublaslt_grouped_gemm.cu:304
     NVTE_CHECK(cuda::sm_arch(current_device) >= 100,
@@ -275,6 +275,58 @@ TE's other Hopper-capable paths need host-side shapes:
 
 So adopting TE on Hopper would *add* a device-to-host sync per MoE layer.
 
-Our own cutlass backend already does what TE cannot: `batch_sizes` must be a
-CUDA tensor (`csrc/moe_cutlass_grouped_gemm.cu:419`) and the problem shapes are
-built by a device kernel (`:253-277`). Sync-free.
+Our own cutlass backend already does this: `batch_sizes` must be a CUDA tensor
+(`csrc/moe_cutlass_grouped_gemm.cu:419`) and the problem shapes are built by a
+device kernel (`:253-277`). Sync-free. So is `torch._grouped_mm`, which is in
+our torch and needs nothing installed.
+
+**Upstream fixed the Hopper gap, in two steps.** The paragraphs above describe
+TE 2.15 and 2.16, which is what we run. Newer releases:
+
+- **2.16**: the C-level check became `sm >= 90`, so the kernel supports Hopper,
+  but PyTorch `GroupedLinear.forward` still took `m_splits: List[int]`, so the
+  host sync was still there one level up.
+- **2.17**: `GroupedLinear.forward(inp, m_splits: torch.Tensor)`, offsets built
+  on device by `tex.splits_to_offsets`. Genuinely sync-free on Hopper.
+
+It needs **cuBLAS 13.4+** on Hopper (13.3 elsewhere, 13.5 for fp8 per-tensor
+current scaling) and `NVTE_GROUPED_LINEAR_USE_FUSED_GROUPED_GEMM=1`, which
+defaults to 0. We have cuBLAS 13.1.1. fp8 *delayed* scaling is not supported on
+that path, only current and block, and delayed is the one that won our fp8
+grouped-GEMM benchmark.
+
+The 2.18 fused grouped MLP (GroupedLinear + activation + GroupedLinear) does
+not help: `fuse_grouped_mlp_ops` returns unfused unless the recipe is mxfp8 or
+nvfp4, and the CuTeDSL variant gates on compute capability 10. Blackwell only.
+
+## Nothing beats sonicmoe on Hopper, and the reason is not the GEMM
+
+Measured on one GH200, one MoE routed-expert path, fwd+bwd, eager, 65536
+tokens/GPU, at the four ladder cells (ms):
+
+| cell | E | top_k | I | cutlass | torch._grouped_mm | sonicmoe |
+|---|---|---|---|---|---|---|
+| g4-S8  | 31 | 3 | 672 |  9.655 |  8.984 | **4.546** |
+| g4-S12 | 47 | 3 | 672 |  9.939 |  9.123 | **4.720** |
+| g8-S8  | 63 | 7 | 336 | 13.322 | 11.898 | **5.930** |
+| g8-S12 | 95 | 7 | 336 | 13.421 | 12.058 | **6.193** |
+
+All four parity-clean first (`_grouped_mm` matches cutlass exactly on out, dWi
+and dWo; sonicmoe within 1%, bf16 reduction order).
+
+sonicmoe fuses the dispatch gather into Wi's A-load and the scatter plus
+router-weight combine into Wo's epilogue. Every grouped-GEMM backend needs
+`moe_scatter_dispatch` and `moe_gather_combine` around it, which at g8-S12 is a
+materialized (458752, 1024) bf16 tensor, about 940 MB, touched roughly six
+times across forward and backward. That traffic is the gap. Swapping the GEMM
+cannot close it, which is why the field of candidates does not matter much.
+
+The published record agrees: SonicMoE (ICLR 2026) beats ScatterMoE by 1.86x,
+MoMoE, MegaBlocks, Megatron and DeepGEMM++ on H100, at intermediate size 256,
+which is our 336 regime.
+
+`torch._grouped_mm` is still worth knowing about. It is in our torch 2.12, runs
+on GH200 sm90 bf16 with device-side offsets, handles ragged and empty groups,
+and profiles as one CUTLASS sm9x grouped kernel per call with zero Memcpy DtoH.
+It beats our JIT-built cutlass extension by 7 to 11% with no dependency and no
+multi-rank build race.
