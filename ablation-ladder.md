@@ -1,9 +1,11 @@
 # Ablation ladder
 
-For review. Nothing runs until this is signed off.
+Status: Tier 1 submitted 2026-09-08 (10 jobs, ids in
+`sep07_abl/run/tier1_jobids.txt`). Tier 2 onward is still open for review.
 
-Every run: 6 h stable + 30 min decay, 4 nodes, 16 GH200. About 104 GPU-hours.
-Run shape is two chained Slurm jobs (see "How a run works").
+Every run: 6 h stable phase, 4 nodes, 16 GH200. About 96 GPU-hours. The 30 min
+decay is a separate later campaign off the saved checkpoints, not chained
+behind each job (see "How a run works").
 
 Deciding metric: **biotrainer PBC and PGym**, run later on the stored
 checkpoints. Biotrainer is not ready yet, so the ablations run now and store
@@ -15,9 +17,9 @@ while the runs are in flight.
 
 Two consequences:
 
-- **Every checkpoint has to survive.** ~150 runs at 399.6M params is on the
-  order of a terabyte. Check the fscratch quota and the real per-run checkpoint
-  size before Tier 0, not at run 60.
+- **Every checkpoint has to survive.** Measured at 4.5 GB per run (model
+  1.6 GB + optimizer 3.2 GB), so about 630 GB for the series against 39 TB free
+  on fscratch. Not a constraint.
 - **Arms cannot be ranked until biotrainer lands.** The tier structure below
   still holds, but Tier 3 onward needs the real metric, so plan to run Tiers 0
   to 2 first and hold.
@@ -119,7 +121,7 @@ treatment. Naming the rule now is the whole point of pre-registering it.
 
 ---
 
-## Tier 1 - settle the optimizer (10 or 15 runs)
+## Tier 1 - settle the optimizer (10 runs, SUBMITTED)
 
 This runs first. Everything downstream is a single-factor arm off the winner,
 so the optimizer and its LR have to be decided before anything else means
@@ -129,9 +131,13 @@ Only AdamW and NorMuon. Muon, NorDion2 and stable_adamw are dropped.
 
 | arm | LR sweep | runs |
 |---|---|---|
-| AdamW | 5 points, 2x spacing, centred 1e-4 | 5 |
-| NorMuon, `spectral_norm` | 5 points, 2x spacing, centred 5e-3 | 5 |
-| NorMuon, `rms_norm` (optional control) | 5 points, centred 1e-3 | 5 |
+| AdamW | 2.5e-5, 5e-5, 1e-4, 2e-4, 4e-4 | 5 |
+| NorMuon, `spectral_norm` | 1.25e-3, 2.5e-3, 5e-3, 1e-2, 2e-2 | 5 |
+
+The `rms_norm` control row was considered and dropped.
+
+**If the winner sits at either end of a grid, the optimum is outside it and the
+grid must be extended before Tier 0 runs on it.**
 
 **Why the spectral sweep is centred at 5e-3 and not 1e-3.** The two scalings
 multiply the square-matrix LR by 6.4 (`rms_norm`) and 1.0 (`spectral_norm`).
@@ -256,7 +262,7 @@ A win that does not survive the scale-up does not go in the paper.
 
 | tier | runs | note |
 |---|---|---|
-| 1 | 10-15 | optimizer + LR, runs first |
+| 1 | 10 | optimizer + LR, runs first. SUBMITTED |
 | 0 | 6 | noise floor on the winning optimizer + LR |
 | 2a | 45 | 15 arms x 3 LRs |
 

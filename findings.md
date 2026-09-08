@@ -172,3 +172,13 @@ The median is the real step time. The 706 values are logging windows that
 contain an eval, and 1796 is the first window, which contains compile. Reading
 the last line of a log as "the step time" will be wrong whenever that window
 happened to include an eval.
+
+## Held jobs do not start themselves after maintenance
+
+The Tier 1 jobs were submitted just before a cluster-wide maintenance window
+and ended up `PENDING` with `Reason=JobHeldUser` and `Priority=0`, which is a
+hold, not a queue position. A held job stays held after the reservation ends.
+
+So a submission that straddles a maintenance window needs an explicit
+`scontrol release <jobids>` afterwards. `squeue` showing PENDING is not enough
+to conclude a job will eventually run: check the Reason field.
