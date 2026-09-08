@@ -24,43 +24,54 @@ Two consequences:
 
 ---
 
-## Prerequisites (must land before Tier 0)
+## Prerequisites
 
-These are not optional. Both break the deciding metric.
+Status as of the last review. Only the open ones gate the start.
 
 | id | problem | fix |
 |---|---|---|
 | P1 | DONE (`4e3bbfc`). Eval inherited the whole training masking recipe, not just the rate: `mlm_probability`, the 80/10/10 split, and the strategy. So A11-A14 all changed the eval task too. | Added `eval_mlm_probability`, `eval_mask_replace_prob`, `eval_random_token_prob`, `eval_keep_probability`, `eval_mlm_masking_strategy`. Pinned in the base config at 15% token, 80/10/10. |
 | P2 | DONE (`4e3bbfc`). Eval masks were redrawn every call from global RNG. | Added `eval_mask_seed`. The mask is seeded from a hash of the batch's token ids, so it is stable across arms, runs, worker counts and batch order. |
-| P3 | Resid-lambda tensors reach the layer as forward args, so FSDP casts them to bf16. Resid lambdas is an arm. | Confirm the dtype. Move to buffers if it matters. |
-| P4 | Launcher has no `--time` default (same footgun as `--nodes` was). If the stable job hits the Slurm limit instead of its own wall-clock budget it exits non-zero, and `afterok` never fires the decay job. | `#SBATCH --time=07:00:00` for the stable job; the decay job gets its own. |
-| P5 | `resume.mode: decay` has never run in this series. | End-to-end chain smoke: short stable job, `--dependency=afterok`, decay job. Confirm `training_state.json` carries `global_step`, that the decay config leaves `max_wallclock_hours` unset so it is step-bounded, and that a final eval actually fires. |
-| P6 | **Eval costs 4.0 s and fires every 250 steps.** Over a 6 h run at ~511 ms/step that is ~169 evals, about 11 min, roughly 3% of the budget. | Confirmed by measurement, not estimate. Decide whether to keep `eval_steps: 250` or widen it. Your call; it is real compute. |
-| P7 | Canon layers (C2) on a layernorm base hit the slow Triton fallback. The CuTe backend covers rms_conv and bare conv only. | C2 would lose on wall-clock because of a kernel gap, not because the idea is bad. Either run it with bare conv, or defer canon to Tier 3 conditional on rmsnorm (A1) winning. |
-| P8 | `9bed380` removed the TE backend. `fp8` still exists as its own module, but Tier 5 promises an fp8 pair. | Smoke `fp8: true` on the pinned tree before promising it. |
+| P3 | Resid-lambda tensors reach the layer as forward args, so FSDP casts them to bf16. | DEFERRED, accepted for now. Revisit if the resid-lambda arm behaves oddly. |
+| P4 | Launcher had no `--time` default (same footgun as `--nodes` was). | DONE. `#SBATCH --time=07:00:00`. |
+| P5 | `resume.mode: decay` has never run in this series. | NO LONGER BLOCKING. The decay runs are a separate campaign off the saved checkpoints, so this gets verified when that campaign is set up, not before the ladder starts. |
+| P6 | Eval cost 4.0 s every 250 steps, about 11 min or 3% of a 6 h run. | DONE. `eval_steps: 500`, halving it to ~1.5%. Eval loss is only a secondary signal now, so the cadence does not need to be tight. |
+| P7 | Canon layers (C2) on a layernorm base hit the slow Triton fallback. | ACCEPTED. C2 runs as-is. Note in the writeup that it carries a kernel handicap on a layernorm base, so a loss there is not evidence against the idea. |
+| P8 | `9bed380` removed the TE backend; Tier 5 promises an fp8 pair. | ACCEPTED. Verify when Tier 5 is reached, not now. |
 
 ---
 
 ## How a run works
 
-The pipeline does not do 6 h + decay in one job. It is two:
+**Two phases, run as separate campaigns, not chained.**
 
-1. **Stable job.** `lr_schedule: warmup_stable`, `max_wallclock_hours: 6.0`.
-   Stops on the clock and writes `checkpoint-stable-end`.
-2. **Decay job.** `resume.mode: decay`, annealing from the stable LR down to
-   `lr_decay_to_fraction`. Chained with `--dependency=afterok`.
+1. **Now: the stable phase.** `lr_schedule: warmup_stable`,
+   `max_wallclock_hours: 6.0`. Stops on the clock and writes
+   `checkpoint-stable-end`. This is what the whole ladder below runs.
+2. **Later: the decay runs.** `resume.mode: decay` from those saved
+   checkpoints, annealing to `lr_decay_to_fraction`.
 
-`decay_steps` is set to 8.33% of the steps the stable phase actually completed,
-so a faster arm gets a proportionally longer decay in steps and the same 30 min
-in wall clock.
+Decoupling them is deliberate. Chaining with `--dependency=afterok` means a
+stable job that dies for any reason silently takes its decay job with it, and
+we would not find out until we went looking. Running the decay campaign
+separately also lets us decide the decay length after seeing the stable
+results, and it fits how the checkpoints get scored: biotrainer runs on them
+later anyway.
 
-**Round `decay_steps` to a multiple of `eval_steps`.** Eval fires on
-`global_step % eval_steps == 0 or at_wsd_stable_end`, and there is no eval after
-the loop. If `decay_steps` is not a multiple of 250 the final decay step gets no
-eval at all, and the run ends with no score. Rounding avoids a code change.
+Slurm time limit is 7 h for a 6 h stable phase. The headroom covers compile,
+dataset setup and the final checkpoint write.
 
-One note: 30 min is about 8% of the run. Common WSD practice is 10 to 20%. Not
-changing it, just flagging that it is a lever.
+Two things to get right when the decay campaign is set up:
+
+- `decay_steps` at 8.33% of the steps the stable phase actually completed
+  gives every arm the same 30 min of decay in wall clock, whatever its speed.
+- **Round `decay_steps` to a multiple of `eval_steps`.** Eval fires on
+  `global_step % eval_steps == 0 or at_wsd_stable_end` and there is no eval
+  after the loop, so an unrounded `decay_steps` ends the run with no score.
+
+One note: 30 min is about 8% of the run. Common WSD practice is 10 to 20%.
+Worth revisiting when the decay campaign is planned, since it is no longer
+locked to the stable runs.
 
 ---
 

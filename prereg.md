@@ -19,7 +19,10 @@ are still scored on the same task.
 
 ## Budget
 
-6 h stable + 30 min decay, 4 nodes, 16 GH200. About 104 GPU-hours per run.
+6 h stable phase, 4 nodes, 16 GH200. About 96 GPU-hours per run.
+
+The 30 min decay is a separate campaign run later off the saved checkpoints,
+not chained to the stable job. Add ~8 GPU-hours per arm when it happens.
 
 ## Noise floor
 
@@ -40,8 +43,8 @@ Tier 3 and 4: 2 seeds.
 ## What is frozen across all arms
 
 Corpus (UniRef50, packed varlen, 512 tokens), 1,048,576 tokens per step, bf16,
-FSDP2 per-layer with fp32 reduce, `num_workers: 4`, profiling on, and the
-pinned code SHA.
+FSDP2 per-layer with fp32 reduce, `num_workers: 4`, `eval_steps: 500`, profiling on, and
+the pinned code SHA.
 
 ## Changed after the fact
 

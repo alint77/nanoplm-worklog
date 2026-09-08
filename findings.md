@@ -101,5 +101,23 @@ Two separate problems, both open:
    `collator.py`. So eval loss carries fresh mask noise, and depends on how
    much RNG training consumed.
 
-Both must be fixed before Phase 0, because post-decay eval loss is the
-deciding metric. See `ablation-ladder.md`, prerequisites.
+Both fixed in `4e3bbfc`. Eval now masks at a pinned 15% token / 80/10/10
+recipe with a fixed seed, independent of what the arm trains at, and an eval
+batch's mask is a hash of its own token ids so it is stable across runs,
+worker counts and batch order.
+
+The keys are `eval_mlm_probability`, `eval_mask_replace_prob`,
+`eval_random_token_prob`, `eval_keep_probability`,
+`eval_mlm_masking_strategy` and `eval_mask_seed`. All default to None, which
+means "same as training", so nobody else's runs change.
+
+## Eval costs 4.0 s a time
+
+Measured off a real 4-node log, not estimated. At `eval_steps: 250` over a 6 h
+run that is about 169 evals, roughly 11 minutes, 3% of the budget. Now at 500.
+
+## A run has no final eval unless the step count lines up
+
+Eval fires on `global_step % eval_steps == 0 or at_wsd_stable_end`, and there
+is no eval after the training loop. So a decay run whose `decay_steps` is not a
+multiple of `eval_steps` finishes with no score at all. Round it.

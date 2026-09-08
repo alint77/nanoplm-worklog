@@ -19,8 +19,9 @@ from stock ModernBERT.
 
 ## Wall-clock matched, not token matched
 
-Each run gets 6 h of stable training on 4 nodes, then 30 min of LR decay.
-About 104 GPU-hours per run.
+Each run gets 6 h of stable training on 4 nodes. About 96 GPU-hours per run.
+The 30 min LR decay is a separate campaign, run later off the saved
+checkpoints rather than chained behind each job.
 
 Why: we care about loss per GPU-hour, not per token. If a change makes the
 model slower, it gets fewer tokens in its 6 h and pays for the slowdown
@@ -73,11 +74,13 @@ architecture results. One bf16-vs-fp8 pair on the final recipe answers it.
 
 ## Logging and profiling
 
-`logging_steps: 20`, `eval_steps: 250`, layerwise metrics every 20, profiler
+`logging_steps: 20`, `eval_steps: 500`, layerwise metrics every 20, profiler
 traces on for every run.
 
 Why: traces are cheap and we have already had two runs where the log alone
-would have hidden the problem.
+would have hidden the problem. Eval is 4.0 s a time, so every 500 steps costs
+about 1.5% of a run rather than 3% at every 250. Eval loss is a secondary
+signal now, so the cadence does not need to be tight.
 
 ## num_workers: 4, written out explicitly
 
@@ -90,6 +93,27 @@ at 16 GPUs it gives 64, which is 256 processes per node and a host-RAM OOM.
 
 Why: about +2.3 MFU points, and the cost is compile time only, which sits
 outside the wall-clock budget.
+
+## Biotrainer decides, not eval loss
+
+The deciding metric is biotrainer PBC and PGym, run later on the stored
+checkpoints. Biotrainer is not ready, so the ablations run now and get scored
+afterwards.
+
+Why it matters for planning: every checkpoint has to survive, which is on the
+order of a terabyte across the series, and arms cannot be ranked until
+biotrainer lands.
+
+## Eval masking pinned and made deterministic
+
+Eval used to inherit the whole training masking recipe, and redrew its masks
+on every call.
+
+Why: a model trained at 15% masking was also scored at 15% while the base was
+scored at 30%. Different tasks, incomparable losses, so any arm touching the
+masking recipe was uninterpretable. And redrawn masks meant every eval number
+carried mask noise. Both fixed. Eval is now pinned at 15% token masking with
+80/10/10 and a fixed seed, for every arm.
 
 ## TE fused RoPE: built, measured, reverted
 
