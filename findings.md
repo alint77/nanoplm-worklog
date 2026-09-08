@@ -358,3 +358,43 @@ Two traps worth writing down, because both fail quietly or misleadingly:
    toolkit. The newest `nvidia-cuda-nvcc` wheel is 13.4.46rc1, which is
    exactly the Hopper bf16 threshold and one short of the 13.5 that fp8
    per-tensor current scaling on Hopper wants.
+
+## Slurm 25.05.9 broke three things at once (2026-09-08 maintenance)
+
+The maintenance installed `slurm 25.05.9-1.20260903git791df5b`. Every 4-node job
+failed afterwards. Three independent regressions, all cluster-side, isolated
+with jobs 1721889 / 1721915 / 1721921 / 1721925:
+
+**1. The first `srun` in a fresh allocation always fails.**
+
+    PSI: doSpawn: spawn to node N failed: ""
+    Could not spawn 'bash' process 0: Invalid argument
+    spawnSingleExecutable: PSI_spawnRsrvtn() failed
+
+Position, not flags. A flagged srun fails in first position and a flagless one
+succeeds in second, so it is not about `--cpu-bind` or `--distribution`.
+Workaround: burn a throwaway `srun ... true || true` before the real one.
+
+**2. The nvidia-smi sampler shape fails in any position.**
+`--overlap --ntasks-per-node=1 --ntasks=<nodes>` inside an
+`--ntasks-per-node=4` allocation, with or without flags. Removed the sampler.
+
+**3. One GPU is now bound per task.** Each task gets
+`CUDA_VISIBLE_DEVICES=<localid>`, so the only valid ordinal inside a task is 0
+and `torch.cuda.set_device(LOCAL_RANK)` raises "invalid device ordinal" on
+local ranks 1-3. The devices are only hidden by the env var, not by cgroups
+(`nvidia-smi -L` still lists four), so `unset CUDA_VISIBLE_DEVICES` in the srun
+wrapper restores the previous behaviour. Verified: device_count 4 and a real
+allocation on `cuda:LOCAL_RANK` from all four tasks.
+
+Forcing `LOCAL_RANK=0` also fixes CUDA and is WRONG: `utils.py` computes
+`is_local_main = (LOCAL_RANK == 0)`, so every rank on a node would think it is
+the local main.
+
+Throughput after the fixes is unchanged: 501 ms / 51.8% MFU against 511 ms /
+50.8% before the maintenance.
+
+**Debugging lesson.** "RUNNING" in `squeue` is not evidence a job is healthy;
+these died about 40 s in. And a `bash -x` launcher echoes its own comments into
+stderr, so grepping stderr for an error string can match the comment that
+documents it. Both cost a wrong conclusion tonight.
