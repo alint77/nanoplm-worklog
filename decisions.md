@@ -115,6 +115,68 @@ masking recipe was uninterpretable. And redrawn masks meant every eval number
 carried mask noise. Both fixed. Eval is now pinned at 15% token masking with
 80/10/10 and a fixed seed, for every arm.
 
+## Settle the optimizer first, and use spectral_norm scaling
+
+NorMuon looked much better than AdamW in the jul30 work, so the optimizer
+phase moves to the front. Everything after it is a single-factor arm off
+whichever optimizer wins.
+
+Only AdamW and NorMuon are in it. Muon, NorDion2 and stable_adamw are dropped.
+
+**The parameterization matters more than it looks.** NorMuon orthogonalizes the
+update, then rescales it by a factor that depends on the matrix shape. There
+are two choices, and dion's docstring says what each is for:
+
+- `spectral_norm`: "for learning rate transfer across model scale"
+- `rms_norm`: "for learning rate compatibility with Adam/AdamW"
+
+The formulas:
+
+- `rms_norm` = `lr * 0.2 * sqrt(max(fan_out, fan_in))`
+- `spectral_norm` = `lr * sqrt(fan_out / fan_in)`
+
+On our actual matrices at h1024:
+
+| matrix | shape | rms_norm | spectral |
+|---|---|---|---|
+| QKV q-block | (1024, 1024) | 6.400 | 1.000 |
+| Wo | (1024, 1024) | 6.400 | 1.000 |
+| MLP up/gate | (5376, 1024) | 14.664 | 2.291 |
+| MLP down | (1024, 2688) | 10.369 | 0.617 |
+
+We chose **spectral_norm**, for three reasons.
+
+1. We sweep the NorMuon LR ourselves, so "compatibility with AdamW's LR" buys
+   us nothing. That is the only thing rms_norm is for.
+2. We scale h1024 to h1152 later. Under rms_norm every effective LR drifts
+   +6.1% on that step and has to be re-tuned. Under spectral_norm it moves
+   -0.8% to 0.0%, which is the entire point of that scaling.
+3. rms_norm uses `max(fan_out, fan_in)`, so it cannot tell a tall matrix from
+   a wide one. The MLP down-projection gets 1.6x the square-matrix LR under
+   rms_norm and 0.62x under spectral: a 2.6x difference in relative weighting.
+   Under GQA the k-block `(512, 1024)` gets exactly the same LR as a full
+   `(1024, 1024)` block under rms_norm, and 0.707x under spectral. For a study
+   whose whole job is varying matrix shapes, rms_norm is not a principled
+   choice.
+
+dion defaults to spectral_norm for every optimizer it ships. nanoplm overrides
+that to rms_norm to preserve older behaviour, and that older behaviour is the
+jul30 series we discarded. We set it explicitly in our configs rather than
+relying on either default.
+
+**LR anchor.** rms_norm multiplies the square-matrix LR by 6.4 and
+spectral_norm by 1.0. So an LR tuned at 1e-3 under rms_norm corresponds to
+roughly 6.4e-3 under spectral for square matrices. The spectral sweep is
+centred at 5e-3, not 1e-3, or it would sweep the wrong decade and NorMuon
+would "lose" for no reason.
+
+## Weight decay matched across the optimizer arms
+
+The dataclass gives NorMuon `muon_weight_decay: 0.01` with cautious decay,
+while our base runs AdamW at `1e-5` plain. Left alone, the optimizer
+comparison would also have been a weight-decay comparison. Both are now 1e-5,
+cautious off.
+
 ## TE fused RoPE: built, measured, reverted
 
 Why: it works and it is about 2x faster at the kernel level, but the step time

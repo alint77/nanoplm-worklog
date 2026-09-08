@@ -29,6 +29,16 @@ not chained to the stable job. Add ~8 GPU-hours per arm when it happens.
 3 seeds plus 3 same-seed repeats of the base, at the LR chosen by the Tier 1
 sweep. Gives sigma_seed and sigma_repeat.
 
+## LR policy
+
+NorMuon runs have two learning rates. `muon_learning_rate` covers the matrix
+parameters; `adam_learning_rate` covers embeddings, the tied head, norms and
+biases.
+
+We sweep `muon_learning_rate` only, and hold `adam_learning_rate` at the value
+the AdamW sweep picked. Sweeping both would be a 2D search for a group that is
+small at vocab 32.
+
 ## Decision rule
 
 An arm's best-over-LR result versus the base's best-over-LR result. The arm

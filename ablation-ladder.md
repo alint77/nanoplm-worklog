@@ -77,9 +77,9 @@ locked to the stable runs.
 
 ## Tier order note
 
-Tier 1 runs **before** Tier 0. The noise floor has to be measured at the LR the
-base actually uses, otherwise sigma is measured at one LR and every arm is
-compared against a base at another.
+Order is Tier 1, then Tier 0, then the rest. The noise floor has to be measured
+on the optimizer and LR everything else will use, otherwise sigma is measured
+against one base and the arms are compared against another.
 
 ## Tier 0 - noise floor (6 runs, after Tier 1)
 
@@ -103,17 +103,46 @@ treatment. Naming the rule now is the whole point of pre-registering it.
 
 ---
 
-## Tier 1 - base LR sweep (5 runs)
+## Tier 1 - settle the optimizer (10 or 15 runs)
 
-5 LRs on the base, 2x spacing, centred on 1e-4.
+This runs first. Everything downstream is a single-factor arm off the winner,
+so the optimizer and its LR have to be decided before anything else means
+anything.
 
-Why this is not optional: a single LR tuned on the base is unfair to any arm
-that moves the optimum. Without it, an optimizer arm that loses may have lost
-only because it ran at AdamW's LR. This is what makes Tier 2 interpretable.
+Only AdamW and NorMuon. Muon, NorDion2 and stable_adamw are dropped.
+
+| arm | LR sweep | runs |
+|---|---|---|
+| AdamW | 5 points, 2x spacing, centred 1e-4 | 5 |
+| NorMuon, `spectral_norm` | 5 points, 2x spacing, centred 5e-3 | 5 |
+| NorMuon, `rms_norm` (optional control) | 5 points, centred 1e-3 | 5 |
+
+**Why the spectral sweep is centred at 5e-3 and not 1e-3.** The two scalings
+multiply the square-matrix LR by 6.4 (`rms_norm`) and 1.0 (`spectral_norm`).
+An LR tuned at 1e-3 under rms sits near 6.4e-3 under spectral. Centring at
+1e-3 would sweep the wrong decade and NorMuon would lose for no reason.
+
+**Why spectral_norm.** See `decisions.md`. Short version: rms_norm exists for
+LR compatibility with AdamW, which we do not need because we sweep; and it
+scales by `max(fan_out, fan_in)`, so it cannot tell a tall matrix from a wide
+one, which matters in a study that varies matrix shapes.
+
+**The optional control row** reproduces the jul30 "NorMuon is much better"
+claim at the new shape under the old scaling, and shows whether spectral's
+transfer benefit costs anything at fixed scale. Worth 5 runs if we want the
+parameterization decision to rest on data rather than on the argument above.
+
+**Two knobs held equal so this is an optimizer comparison and nothing else:**
+weight decay 1e-5 on both, cautious decay off. The dataclass would otherwise
+give NorMuon 0.01 with cautious decay against AdamW's 1e-5 plain.
+
+**LR policy for the NorMuon rows:** sweep `muon_learning_rate`, hold
+`adam_learning_rate` at the AdamW sweep's winner. NorMuon runs have both, and
+the AdamW group holds embeddings, the tied head, norms and biases.
 
 ---
 
-## Tier 2 - one factor at a time (about 75 runs)
+## Tier 2 - one factor at a time (about 85 runs)
 
 Each arm changes exactly one thing from the base. No arm builds on another.
 Each arm runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The
@@ -148,17 +177,8 @@ alternatives to the geglu base, not a sample of one.
 
 ### 2b. Optimizers
 
-| id | change | why |
-|---|---|---|
-| B1 | muon | matrix-aware, the current default in a lot of frontier work |
-| B2 | normuon | our best jul30 result, and the only one that cleared noise |
-| B3 | nordion2 | newly wired up |
-| B4 | stable_adamw | cheap robustness check on the AdamW baseline |
-
-These cannot use "0.5x/1x/2x of the base optimum": Muon-family LRs live on a
-different scale from AdamW's entirely. Each gets its own 5-point sweep anchored
-on its own published default. That is +8 runs beyond the 3-LR rule, counted in
-the budget below.
+Moved to Tier 1 and cut to AdamW vs NorMuon. Muon, NorDion2 and stable_adamw
+are dropped.
 
 ### 2c. Our own ideas
 
@@ -220,16 +240,16 @@ A win that does not survive the scale-up does not go in the paper.
 
 | tier | runs | note |
 |---|---|---|
-| 1 | 5 | base LR sweep, runs first |
-| 0 | 6 | noise floor at the chosen LR |
+| 1 | 10-15 | optimizer + LR, runs first |
+| 0 | 6 | noise floor on the winning optimizer + LR |
 | 2a | 45 | 15 arms x 3 LRs |
-| 2b | 20 | 4 optimizers x 5 LRs |
+
 | 2c | 30 | 10 arms x 3 LRs |
 | 2c seeds | 10 | second seed on our own ideas |
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~150** | **~14,400 GPU-hours** |
+| **total** | **~135-140** | **~13,000 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.

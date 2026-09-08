@@ -121,3 +121,29 @@ run that is about 169 evals, roughly 11 minutes, 3% of the budget. Now at 500.
 Eval fires on `global_step % eval_steps == 0 or at_wsd_stable_end`, and there
 is no eval after the training loop. So a decay run whose `decay_steps` is not a
 multiple of `eval_steps` finishes with no score at all. Round it.
+
+## NorMuon's LR scaling is shape-blind under rms_norm
+
+`muon_adjust_lr` picks how the orthogonalized update is rescaled per matrix:
+
+- `rms_norm` = `lr * 0.2 * sqrt(max(fan_out, fan_in))`
+- `spectral_norm` = `lr * sqrt(fan_out / fan_in)`
+
+`rms_norm` takes the max of the two fans, so it cannot distinguish a tall
+matrix from a wide one. Consequences at our shape:
+
+- the MLP down-projection `(1024, 2688)` gets 1.6x the square-matrix LR under
+  rms_norm and 0.62x under spectral. A 2.6x difference in relative weighting.
+- under GQA, the k-block `(512, 1024)` gets exactly the same LR as a full
+  `(1024, 1024)` block under rms_norm. Under spectral it gets 0.707x.
+- scaling h1024 to h1152 drifts every LR +6.1% under rms_norm and -0.8% to
+  0.0% under spectral.
+
+dion's docstring: spectral_norm is "for learning rate transfer across model
+scale", rms_norm is "for learning rate compatibility with Adam/AdamW". dion
+defaults to spectral_norm everywhere; nanoplm overrode it to rms_norm to
+preserve pre-jul30 behaviour.
+
+Also worth knowing: an LR tuned under rms_norm sits about 6.4x lower than the
+equivalent under spectral_norm for square matrices. Reusing the number across
+the two scalings sweeps the wrong decade.
