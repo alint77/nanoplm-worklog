@@ -147,3 +147,28 @@ preserve pre-jul30 behaviour.
 Also worth knowing: an LR tuned under rms_norm sits about 6.4x lower than the
 equivalent under spectral_norm for square matrices. Reusing the number across
 the two scalings sweeps the wrong decade.
+
+## A wall-clock stop does not write "checkpoint-stable-end"
+
+It writes `checkpoint-<step>` and says so:
+
+    Stopped on the wall-clock budget at step 920/100000; skipping the
+    terminal 'stable-end' checkpoint. Latest state is checkpoint-920.
+
+The terminal role name is reserved for a run that reaches the end of its LR
+schedule. A wall-clock stop never does, and naming a mid-schedule snapshot
+"final" would misrepresent it and could clobber a real one in the same output
+directory.
+
+Harmless once you know: the checkpoint is complete and
+`ResumeConfig.checkpoint_dir` takes an explicit path.
+
+## dt in the log is a windowed average and includes eval
+
+Step-time distribution over a 920-step run at `eval_steps: 50`:
+`min 506, p25 512, median 514, p75 706, max 1796`.
+
+The median is the real step time. The 706 values are logging windows that
+contain an eval, and 1796 is the first window, which contains compile. Reading
+the last line of a log as "the step time" will be wrong whenever that window
+happened to include an eval.

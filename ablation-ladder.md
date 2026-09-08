@@ -46,10 +46,26 @@ Status as of the last review. Only the open ones gate the start.
 **Two phases, run as separate campaigns, not chained.**
 
 1. **Now: the stable phase.** `lr_schedule: warmup_stable`,
-   `max_wallclock_hours: 6.0`. Stops on the clock and writes
-   `checkpoint-stable-end`. This is what the whole ladder below runs.
+   `max_wallclock_hours: 6.0`. This is what the whole ladder below runs.
 2. **Later: the decay runs.** `resume.mode: decay` from those saved
    checkpoints, annealing to `lr_decay_to_fraction`.
+
+**The wall-clock stop writes `checkpoint-<step>`, not `checkpoint-stable-end`.**
+Verified on a real run: "Stopped on the wall-clock budget at step 920/100000;
+skipping the terminal 'stable-end' checkpoint. Latest state is
+checkpoint-920." The pipeline reserves the terminal role name for a run that
+actually reaches the end of its LR schedule, which a wall-clock stop never
+does.
+
+This is not a problem. The checkpoint is complete (model 1.6 GB + optimizer
+3.2 GB + scheduler + RNG + configs, 4.5 GB) and `ResumeConfig.checkpoint_dir`
+is an explicit path, so the decay campaign just points at the step-named
+directory. Worth knowing so nothing goes hunting for a name that will not be
+there.
+
+Storage: one checkpoint per run at 4.5 GB (`save_steps` is off), so about
+630 GB for the series. Only `pytorch_model.bin` (1.6 GB) is needed for
+biotrainer, so the optimizer state can be pruned later if space gets tight.
 
 Decoupling them is deliberate. Chaining with `--dependency=afterok` means a
 stable job that dies for any reason silently takes its decay job with it, and
