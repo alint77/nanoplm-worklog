@@ -94,9 +94,64 @@ locked to the stable runs.
 
 ---
 
+## Tier 0b - global batch size (6 runs, runs FIRST)
+
+Batch size gates everything, because both optimizers' LR optima move with it.
+An LR sweep at 1M is not transferable to 4M, so this runs before Tier 1.
+
+**The infra argument for a bigger batch does not survive measurement.** FSDP2
+does skip the reduce-scatter on accumulation micro-steps
+(`set_requires_gradient_sync(at_accum_boundary)`), but exposed (non-overlapped)
+NCCL is only **5.2 ms of a 511 ms step, 1.0%**. Measured from the h1024/L32
+4-node trace by subtracting the compute-kernel union from the NCCL union.
+
+| grad_accum | upper-bound saving |
+|---|---|
+| 2 | 2.6 ms/step, 0.5% |
+| 4 | 3.9 ms/step, 0.8% |
+
+So a bigger batch is worth under 1% of throughput here. It has to be chosen on
+learning grounds, not infra grounds.
+
+**At fixed wall-clock the token count is the same either way** (44.3B in 6 h at
+any of these batches), so the only question is whether the model learns as much
+from 10.5k steps of 4M as from 42k steps of 1M. That is the critical-batch-size
+question, and it is measurable.
+
+The probe is **token-matched, not wall-clock matched**, so it isolates the batch
+effect:
+
+| run | batch | grad_accum | steps | tokens | warmup | AdamW LR | NorMuon LR |
+|---|---|---|---|---|---|---|---|
+| b1M | 1.05M | 1 | 9600 | 10.07B | 1000 | 1e-4 | 1e-2 |
+| b2M | 2.10M | 2 | 4800 | 10.07B | 500 | 1.41e-4 | 1.41e-2 |
+| b4M | 4.19M | 4 | 2400 | 10.07B | 250 | 2e-4 | 2e-2 |
+
+Both optimizers, 6 runs, ~1.4 h each. LRs scale by sqrt(B) from the 1M anchor,
+which is the standard rule and an approximation: it will be somewhat unfair to
+whichever optimizer scales differently, and that is a known limitation of the
+probe rather than a result. Warmup is held at a fixed 1.05B tokens, not a fixed
+step count, or warmup would eat a quarter of the 4M run. Step counts are
+multiples of `eval_steps` so each run ends on an eval.
+
+**Decision rule.** If 4M is within noise of 1M at equal tokens, take 4M (fewer
+optimizer steps, marginally better infra, better headroom for scale-out). If 4M
+is clearly worse, the critical batch is below 4M: take 2M or stay at 1M.
+
+**ESM C's batch size is unverified.** It may be 4M; we have no local copy of the
+paper or code to check, and we are not going to propagate a half-remembered
+number into a design document. If it matters for the writeup, look it up.
+
+Whatever is chosen here is chosen at 400M. The 600M transfer runs in Tier 5
+have a different critical batch, and the writeup has to say the batch was picked
+at the small size.
+
+---
+
 ## Tier order note
 
-Order is Tier 1, then Tier 0, then the rest. The noise floor has to be measured
+Order is Tier 0b (batch), then Tier 1 (optimizer), then Tier 0 (noise floor),
+then the rest. The noise floor has to be measured
 on the optimizer and LR everything else will use, otherwise sigma is measured
 against one base and the arms are compared against another.
 
@@ -355,7 +410,8 @@ A win that does not survive the scale-up does not go in the paper.
 
 | tier | runs | note |
 |---|---|---|
-| 1 | 24 | optimizer: Wave 1 LR (10, SUBMITTED), Wave 2 wd/beta2 (14, blocked on Wave 1) |
+| 0b | 6 | global batch size, runs first. SUBMITTED |
+| 1 | 24 | optimizer: Wave 1 LR (10, blocked on 0b), Wave 2 wd/beta2 (14, blocked on Wave 1) |
 | 0 | 6 | noise floor on the winning optimizer + LR |
 | 2a | 33 | 11 arms x 3 LRs |
 
@@ -365,7 +421,7 @@ A win that does not survive the scale-up does not go in the paper.
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~130** | **~12,500 GPU-hours** |
+| **total** | **~136** | **~12,600 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.
@@ -375,7 +431,6 @@ bottom of 2c costs the least.
 Say the word and any of these come in. Each is 2 to 5 runs.
 
 - sequence length 1024 instead of 512
-- global batch size (currently 1M tokens)
 - warmup length (currently 1000 steps)
 - decay length and shape (currently 30 min, 1-sqrt). We flagged 30 min as short
   versus the usual 10 to 20%, but did not test it.

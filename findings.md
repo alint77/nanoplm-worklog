@@ -225,3 +225,22 @@ So active experts per token is `top_k + 1`, not `top_k`, and:
 This is why jul30's `arm11-moe12x` (48 routed, top_k 3) was reported as 49
 experts and 12.25x. A matched-active grid that counts only routed experts is
 wrong on both axes: it under-counts active width by 25% at top_k 3.
+
+## Exposed comms is 1% of the step, so bigger batches buy almost nothing on infra
+
+FSDP2 does skip the reduce-scatter during gradient accumulation
+(`set_requires_gradient_sync(at_accum_boundary)` in `pure_pipeline.py`), so a
+bigger batch really does cut collectives per token. It just does not matter
+here.
+
+Measured on the h1024/L32 4-node trace, subtracting the compute-kernel union
+from the NCCL union:
+
+- NCCL total (union): 140.4 ms per step
+- NCCL **exposed**: 5.2 ms per step, 1.0% of a 511 ms step
+
+Upper bound saving is `(ga-1)/ga x 5.2 ms`: 2.6 ms at ga=2, 3.9 ms at ga=4.
+Under 1% of throughput either way.
+
+The lesson repeats an earlier one: total NCCL time (140 ms) looks like a big
+lever and is not. Only exposed comms is a cost.
