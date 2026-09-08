@@ -99,19 +99,31 @@ locked to the stable runs.
 Batch size gates everything, because both optimizers' LR optima move with it.
 An LR sweep at 1M is not transferable to 4M, so this runs before Tier 1.
 
-**The infra argument for a bigger batch does not survive measurement.** FSDP2
-does skip the reduce-scatter on accumulation micro-steps
-(`set_requires_gradient_sync(at_accum_boundary)`), but exposed (non-overlapped)
-NCCL is only **5.2 ms of a 511 ms step, 1.0%**. Measured from the h1024/L32
-4-node trace by subtracting the compute-kernel union from the NCCL union.
+**The infra argument is about scale-out headroom, not comms overhead.**
 
-| grad_accum | upper-bound saving |
-|---|---|
-| 2 | 2.6 ms/step, 0.5% |
-| 4 | 3.9 ms/step, 0.8% |
+Global batch caps how many GPUs can be used before the per-GPU batch has to
+shrink, and a smaller local batch means smaller GEMMs and lower utilisation.
+At `micro_batch_seqs` 128 and 512-token sequences, each GPU takes 65,536 tokens:
 
-So a bigger batch is worth under 1% of throughput here. It has to be chosen on
-learning grounds, not infra grounds.
+| global batch | GPUs at full local batch | nodes |
+|---|---|---|
+| 1.0M | 16 | 4 |
+| 2.1M | 32 | 8 |
+| 4.2M | 64 | 16 |
+| 8.4M | 128 | 32 |
+
+So 1M tokens caps us at 4 nodes before local batch starts dropping. 4M buys 16
+nodes at the same local batch. That is the argument for a bigger batch, and it
+is about the eventual full-scale run, not about these ablations, which are
+pinned at 4 nodes.
+
+**Comms overhead is NOT the argument.** FSDP2 does skip the reduce-scatter on
+accumulation micro-steps (`set_requires_gradient_sync(at_accum_boundary)`), but
+exposed (non-overlapped) NCCL is only **5.2 ms of a 511 ms step, 1.0%**,
+measured from the h1024/L32 4-node trace by subtracting the compute-kernel union
+from the NCCL union. Upper-bound saving is 2.6 ms at ga=2 and 3.9 ms at ga=4,
+under 1% either way. Anyone reaching for grad-accum to save collectives at this
+scale is reaching for nothing.
 
 **At fixed wall-clock the token count is the same either way** (44.3B in 6 h at
 any of these batches), so the only question is whether the model learns as much
@@ -134,9 +146,13 @@ probe rather than a result. Warmup is held at a fixed 1.05B tokens, not a fixed
 step count, or warmup would eat a quarter of the 4M run. Step counts are
 multiples of `eval_steps` so each run ends on an eval.
 
-**Decision rule.** If 4M is within noise of 1M at equal tokens, take 4M (fewer
-optimizer steps, marginally better infra, better headroom for scale-out). If 4M
-is clearly worse, the critical batch is below 4M: take 2M or stay at 1M.
+**Decision rule.** If 4M is within noise of 1M at equal tokens, take 4M: it
+costs nothing in learning and buys 4x the scale-out headroom for the full run.
+If 4M is clearly worse, the critical batch is below 4M, so take 2M or stay at
+1M and accept the node ceiling.
+
+The learning question is the only one the probe answers. The scale-out headroom
+is arithmetic, not something to measure.
 
 **ESM C's batch size is unverified.** It may be 4M; we have no local copy of the
 paper or code to check, and we are not going to propagate a half-remembered

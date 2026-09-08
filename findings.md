@@ -226,7 +226,7 @@ This is why jul30's `arm11-moe12x` (48 routed, top_k 3) was reported as 49
 experts and 12.25x. A matched-active grid that counts only routed experts is
 wrong on both axes: it under-counts active width by 25% at top_k 3.
 
-## Exposed comms is 1% of the step, so bigger batches buy almost nothing on infra
+## Bigger global batch buys scale-out headroom, not comms savings
 
 FSDP2 does skip the reduce-scatter during gradient accumulation
 (`set_requires_gradient_sync(at_accum_boundary)` in `pure_pipeline.py`), so a
@@ -244,3 +244,11 @@ Under 1% of throughput either way.
 
 The lesson repeats an earlier one: total NCCL time (140 ms) looks like a big
 lever and is not. Only exposed comms is a cost.
+
+**The real reason to want a bigger global batch is strong scaling.** Global
+batch caps the world size that can run at full local batch: at
+`micro_batch_seqs` 128 and 512-token sequences each GPU takes 65,536 tokens, so
+1M tokens caps us at 16 GPUs, 2M at 32, 4M at 64, 8M at 128. Past that ceiling
+the local batch shrinks, GEMMs get smaller and utilisation drops. That is an
+argument about the eventual full-scale run, and it is arithmetic rather than
+something to measure.
