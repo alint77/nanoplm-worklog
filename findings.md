@@ -304,12 +304,12 @@ nvfp4, and the CuTeDSL variant gates on compute capability 10. Blackwell only.
 Measured on one GH200, one MoE routed-expert path, fwd+bwd, eager, 65536
 tokens/GPU, at the four ladder cells (ms):
 
-| cell | E | top_k | I | cutlass | torch._grouped_mm | sonicmoe |
-|---|---|---|---|---|---|---|
-| g4-S8  | 31 | 3 | 672 |  9.655 |  8.984 | **4.546** |
-| g4-S12 | 47 | 3 | 672 |  9.939 |  9.123 | **4.720** |
-| g8-S8  | 63 | 7 | 336 | 13.322 | 11.898 | **5.930** |
-| g8-S12 | 95 | 7 | 336 | 13.421 | 12.058 | **6.193** |
+| cell | E | top_k | I | cutlass | torch._grouped_mm | TE 2.18 | sonicmoe |
+|---|---|---|---|---|---|---|---|
+| g4-S8  | 31 | 3 | 672 |  9.655 |  8.984 |  9.059 | **4.546** |
+| g4-S12 | 47 | 3 | 672 |  9.939 |  9.123 |  9.200 | **4.720** |
+| g8-S8  | 63 | 7 | 336 | 13.322 | 11.898 | 12.179 | **5.930** |
+| g8-S12 | 95 | 7 | 336 | 13.421 | 12.058 |  FAIL  | **6.193** |
 
 All four parity-clean first (`_grouped_mm` matches cutlass exactly on out, dWi
 and dWo; sonicmoe within 1%, bf16 reduction order).
@@ -330,3 +330,31 @@ on GH200 sm90 bf16 with device-side offsets, handles ragged and empty groups,
 and profiles as one CUTLASS sm9x grouped kernel per call with zero Memcpy DtoH.
 It beats our JIT-built cutlass extension by 7 to 11% with no dependency and no
 multi-rank build race.
+
+
+## TE 2.18 on Hopper: built, measured, tied with torch._grouped_mm
+
+We built TE 2.18 against a CUDA 13.4 toolkit and ran it. The Hopper grouped
+GEMM works: `_is_grouped_tensor_path_supported` returns True at cublasLt
+130401 on cc (9,0), forward and backward, with `m_splits` as a device tensor.
+Output matches `torch._grouped_mm` exactly.
+
+It is also 0.4% to 1.7% *slower* than `torch._grouped_mm`, which we already
+have for free. Both sit 2.0x behind sonicmoe, because both need the same
+materialized scatter and gather around the GEMM.
+
+**It caps at 64 groups.** `cublaslt_grouped_gemm.cu:667`:
+`A_list supports up to 64 tensors per kernel, got 95`. The g8-S12 cell (E=95)
+cannot run on TE at all. Nothing else we tested has that limit.
+
+Two traps worth writing down, because both fail quietly or misleadingly:
+
+1. A runtime cuBLAS upgrade is not enough. The kernel is behind
+   `#if CUBLAS_VERSION >= 130300`, so TE must be *compiled* against 13.3+
+   headers or it raises `compile-time cuBLAS version is 130000` at the first
+   call, while the Python-level gate still says True.
+2. nvcc prefers its own bundled headers over `CPATH`, so you cannot shim
+   newer cuBLAS headers into an older toolkit. You need a whole newer
+   toolkit. The newest `nvidia-cuda-nvcc` wheel is 13.4.46rc1, which is
+   exactly the Hopper bf16 threshold and one short of the 13.5 that fp8
+   per-tensor current scaling on Hopper wants.
