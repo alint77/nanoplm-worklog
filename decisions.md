@@ -115,6 +115,21 @@ masking recipe was uninterpretable. And redrawn masks meant every eval number
 carried mask noise. Both fixed. Eval is now pinned at 15% token masking with
 80/10/10 and a fixed seed, for every arm.
 
+## Untied embeddings in the base
+
+ModernBERT ties the input embedding to the output head. We do not.
+
+Why: tying exists to save parameters on LLM-sized vocabularies. At vocab 32 the
+embedding matrix is 32 x 1024, so tying saves 32,768 parameters out of 399.6M,
+which is 0.008%. The rationale does not transfer to a protein model.
+
+The untied head is a (32, 1024) matrix and routes to the AdamW group, not into
+Newton-Schulz, because `_is_embedding_or_unembedding_param` catches
+`decoder.weight`. So this is safe under NorMuon.
+
+The Tier 2 arm flips accordingly: it now tests *tied* embeddings, in case the
+coupling helps for reasons other than parameter count.
+
 ## Settle the optimizer first, and use spectral_norm scaling
 
 NorMuon looked much better than AdamW in the jul30 work, so the optimizer

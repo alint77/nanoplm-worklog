@@ -162,7 +162,7 @@ design, not a confound.
 | A5 | QK norm before RoPE | `reorder_RoPE_QKNorm` | order is not obviously settled |
 | A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
 | A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
-| A8 | untied embeddings | `tie_word_embeddings` | costs params, may buy output quality |
+| A8 | tied embeddings | `tie_word_embeddings` | the base is now untied; this tests whether coupling the head to the embedding helps anyway |
 | A9 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
 | A10 | MLM 15% | `mlm_probability` | 30% is high |
 | A11 | MLM 40% | `mlm_probability` | the other direction |
