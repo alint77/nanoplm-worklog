@@ -15,7 +15,7 @@ while the runs are in flight.
 
 Two consequences:
 
-- **Every checkpoint has to survive.** ~135 runs at 399.6M params is on the
+- **Every checkpoint has to survive.** ~150 runs at 399.6M params is on the
   order of a terabyte. Check the fscratch quota and the real per-run checkpoint
   size before Tier 0, not at run 60.
 - **Arms cannot be ranked until biotrainer lands.** The tier structure below
@@ -128,20 +128,23 @@ design, not a confound.
 |---|---|---|---|
 | A1 | rmsnorm | `norm_type` | cheaper, widely adopted since ModernBERT |
 | A2 | swiglu | `mlp_activation` | the common alternative to geglu |
-| A3 | squared relu | `mlp_activation` | cheap, competitive in recent work |
-| A4 | srelu | `mlp_activation` | ours, sparse activations |
-| A5 | QK norm on | `use_qk_norm` | attention-logit stability at depth |
-| A6 | QK norm before RoPE | `reorder_RoPE_QKNorm` | order is not obviously settled |
-| A7 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
-| A8 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
-| A9 | untied embeddings | `tie_word_embeddings` | costs params, may buy output quality |
-| A10 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
-| A11 | MLM 15% | `mlm_probability` | 30% is high; needs P1 to be interpretable |
-| A12 | MLM 40% | `mlm_probability` | the other direction |
-| A13 | span masking | `mlm_masking_strategy` | BERT-style spans vs per-token |
-| A14 | mask 100%, no 80/10/10 | `mask_replace_prob` | the 10/10 split is cargo-culted from BERT |
-| A15 | weight decay 0.1 | `adam_weight_decay` | 1e-5 is very low |
-| A16 | beta2 0.95 | `adam_beta2` | 0.98 is inherited |
+| A3 | srelu | `mlp_activation` | squared ReLU, ungated. Cheap, and the only other value the config accepts |
+| A4 | QK norm on | `use_qk_norm` | attention-logit stability at depth |
+| A5 | QK norm before RoPE | `reorder_RoPE_QKNorm` | order is not obviously settled |
+| A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
+| A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
+| A8 | untied embeddings | `tie_word_embeddings` | costs params, may buy output quality |
+| A9 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
+| A10 | MLM 15% | `mlm_probability` | 30% is high |
+| A11 | MLM 40% | `mlm_probability` | the other direction |
+| A12 | span masking | `mlm_masking_strategy` | BERT-style spans vs per-token |
+| A13 | mask 100%, no 80/10/10 | `mask_replace_prob` | the 10/10 split is cargo-culted from BERT |
+| A14 | weight decay 0.1 | `adam_weight_decay` | 1e-5 is very low |
+| A15 | beta2 0.95 | `adam_beta2` | 0.98 is inherited |
+
+`mlp_activation` accepts only `{swiglu, geglu, srelu}`, and `srelu` is
+`relu(x).square()` (`config.py:513`). So A2 and A3 are the complete set of
+alternatives to the geglu base, not a sample of one.
 
 ### 2b. Optimizers
 
@@ -219,14 +222,14 @@ A win that does not survive the scale-up does not go in the paper.
 |---|---|---|
 | 1 | 5 | base LR sweep, runs first |
 | 0 | 6 | noise floor at the chosen LR |
-| 2a | 48 | 16 arms x 3 LRs |
+| 2a | 45 | 15 arms x 3 LRs |
 | 2b | 20 | 4 optimizers x 5 LRs |
 | 2c | 30 | 10 arms x 3 LRs |
 | 2c seeds | 10 | second seed on our own ideas |
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~153** | **~16,000 GPU-hours** |
+| **total** | **~150** | **~14,400 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.
