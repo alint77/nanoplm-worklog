@@ -252,3 +252,29 @@ batch caps the world size that can run at full local batch: at
 the local batch shrinks, GEMMs get smaller and utilisation drops. That is an
 argument about the eventual full-scale run, and it is arithmetic rather than
 something to measure.
+
+## TE's sync-free grouped GEMM is Blackwell-only, not a CUDA version thing
+
+`nvte_grouped_gemm` and its two variants take device-side group metadata, which
+is exactly what a MoE dispatch wants. They are unusable here:
+
+    common/gemm/cublaslt_grouped_gemm.cu:304
+    NVTE_CHECK(cuda::sm_arch(current_device) >= 100,
+               " requires Blackwell (SM100) or newer architecture.");
+
+That is a hard runtime check, not a compile guard. GH200 is sm_90, so no CUDA
+version reaches it. The cuBLAS 13.2 requirement in the header is a second
+condition, not the binding one.
+
+TE's other Hopper-capable paths need host-side shapes:
+
+- `GroupedLinear.forward(inp, m_splits: List[int])` does `len`, `sum` and
+  `torch.split` on a Python list.
+- TE's own SM90 CUTLASS kernel (`gemm/cutlass_grouped_gemm.cuh:279`) builds
+  `problem_sizes_host` in a loop over separate per-expert tensors.
+
+So adopting TE on Hopper would *add* a device-to-host sync per MoE layer.
+
+Our own cutlass backend already does what TE cannot: `batch_sizes` must be a
+CUDA tensor (`csrc/moe_cutlass_grouped_gemm.cu:419`) and the problem shapes are
+built by a device kernel (`:253-277`). Sync-free.
