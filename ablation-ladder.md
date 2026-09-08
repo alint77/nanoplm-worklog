@@ -94,7 +94,7 @@ locked to the stable runs.
 
 ---
 
-## Tier 0b - global batch size (6 runs, runs FIRST)
+## Tier 0b - global batch size (10 runs, runs FIRST)
 
 Batch size gates everything, because both optimizers' LR optima move with it.
 An LR sweep at 1M is not transferable to 4M, so this runs before Tier 1.
@@ -130,21 +130,37 @@ any of these batches), so the only question is whether the model learns as much
 from 10.5k steps of 4M as from 42k steps of 1M. That is the critical-batch-size
 question, and it is measurable.
 
-The probe is **token-matched, not wall-clock matched**, so it isolates the batch
-effect:
+**ESM C uses 4.2M tokens**, verified from the ESM Cambrian blog post, not
+remembered. Stage 1 is 512 context (same as ours), 1M steps; stage 2 is 2048
+context, 500k steps. 1.5M steps and 6.2T tokens total. Their 300M is 30 layers
+/ 960 wide / 15 heads and their 600M is 36 / 1152 / 18, which is where our
+aspect-ratio-32 shapes came from. They use SwiGLU, not geglu. Optimizer,
+warmup and masking rate are not stated.
+
+**Their 300M ran at LR 5e-4 at that batch**, and that changes the probe. Naive
+sqrt(B) scaling from our 1M anchor of 1e-4 gives only 2e-4 at 4M, which is 2.5x
+below the one real-world reference point we have. A probe that ran 4M at 2e-4
+could easily conclude "4M is worse" when it actually means "4M was
+under-tuned".
+
+So each larger batch gets two LRs, sqrt(B) and linear, and is judged on the
+better of the two:
 
 | run | batch | grad_accum | steps | tokens | warmup | AdamW LR | NorMuon LR |
 |---|---|---|---|---|---|---|---|
 | b1M | 1.05M | 1 | 9600 | 10.07B | 1000 | 1e-4 | 1e-2 |
 | b2M | 2.10M | 2 | 4800 | 10.07B | 500 | 1.41e-4 | 1.41e-2 |
+| b2M-lin | 2.10M | 2 | 4800 | 10.07B | 500 | 2e-4 | 2e-2 |
 | b4M | 4.19M | 4 | 2400 | 10.07B | 250 | 2e-4 | 2e-2 |
+| b4M-lin | 4.19M | 4 | 2400 | 10.07B | 250 | 4e-4 | 4e-2 |
 
-Both optimizers, 6 runs, ~1.4 h each. LRs scale by sqrt(B) from the 1M anchor,
-which is the standard rule and an approximation: it will be somewhat unfair to
-whichever optimizer scales differently, and that is a known limitation of the
-probe rather than a result. Warmup is held at a fixed 1.05B tokens, not a fixed
-step count, or warmup would eat a quarter of the 4M run. Step counts are
-multiples of `eval_steps` so each run ends on an eval.
+Both optimizers, 10 runs, ~1.4 h each. The AdamW 4M-lin cell at 4e-4 sits next
+to ESM C's 5e-4, so the grid now brackets the only external anchor we have.
+
+Warmup is held at a fixed 1.05B tokens, not a fixed step count, or warmup would
+eat a quarter of the 4M run. Step counts are multiples of `eval_steps` so each
+run ends on an eval. The probe is **token-matched, not wall-clock matched**, so
+it isolates the batch effect.
 
 **Decision rule.** If 4M is within noise of 1M at equal tokens, take 4M: it
 costs nothing in learning and buys 4x the scale-out headroom for the full run.
@@ -153,10 +169,6 @@ If 4M is clearly worse, the critical batch is below 4M, so take 2M or stay at
 
 The learning question is the only one the probe answers. The scale-out headroom
 is arithmetic, not something to measure.
-
-**ESM C's batch size is unverified.** It may be 4M; we have no local copy of the
-paper or code to check, and we are not going to propagate a half-remembered
-number into a design document. If it matters for the writeup, look it up.
 
 Whatever is chosen here is chosen at 400M. The 600M transfer runs in Tier 5
 have a different critical batch, and the writeup has to say the batch was picked
@@ -426,7 +438,7 @@ A win that does not survive the scale-up does not go in the paper.
 
 | tier | runs | note |
 |---|---|---|
-| 0b | 6 | global batch size, runs first. SUBMITTED |
+| 0b | 10 | global batch size, runs first. SUBMITTED |
 | 1 | 24 | optimizer: Wave 1 LR (10, blocked on 0b), Wave 2 wd/beta2 (14, blocked on Wave 1) |
 | 0 | 6 | noise floor on the winning optimizer + LR |
 | 2a | 33 | 11 arms x 3 LRs |
@@ -437,7 +449,7 @@ A win that does not survive the scale-up does not go in the paper.
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~136** | **~12,600 GPU-hours** |
+| **total** | **~140** | **~12,700 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.

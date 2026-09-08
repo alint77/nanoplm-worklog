@@ -192,6 +192,25 @@ while our base runs AdamW at `1e-5` plain. Left alone, the optimizer
 comparison would also have been a weight-decay comparison. Both are now 1e-5,
 cautious off.
 
+## Global batch size is settled before the optimizer
+
+Both optimizers' LR optima move with batch size, so an LR sweep at one batch is
+not transferable to another. Tier 0b runs first.
+
+The reason to want a bigger batch is scale-out headroom, not comms. At
+`micro_batch_seqs` 128 and 512-token sequences each GPU takes 65,536 tokens, so
+global batch caps the world size that can run at full local batch: 1M caps us
+at 16 GPUs, 2M at 32, 4M at 64, 8M at 128. Below that ceiling the local batch
+shrinks and utilisation drops.
+
+Comms is not the reason: exposed NCCL is 5.2 ms of a 511 ms step (1.0%), so
+gradient accumulation saves under 1% of throughput.
+
+**ESM C uses 4.2M tokens** (verified from the ESM Cambrian blog), at 512 context
+in stage 1, with LR 5e-4 for their 300M. That LR is 2.5x above what sqrt(B)
+scaling from our 1M anchor would give at 4M, so the probe tests each larger
+batch at two LRs, sqrt(B) and linear, and takes the better.
+
 ## MoE is compared at matched active parameters
 
 Not matched total parameters.
