@@ -210,3 +210,18 @@ master. Verified under a real 1-rank FSDP2 with `MixedPrecisionPolicy`.
 `nesterov` (true vs false), `epsilon` (1e-7 vs 1e-8). None is documented as
 deliberate. The series now runs dion's defaults, and the last two are arms in
 Tier 1 Wave 2 so the deviation gets tested rather than inherited.
+
+## MoE always has a shared expert, and it changes the arithmetic
+
+`MoELayer` builds one `ModernBertSwiGLUMLP(config)` that processes every token
+(`moe.py:468`), at the same `intermediate_size` as a routed expert. There is no
+knob to turn it off.
+
+So active experts per token is `top_k + 1`, not `top_k`, and:
+
+- active MLP width = `(top_k + 1) x intermediate_size`
+- sparsity = `(moe_num_experts + 1) / (top_k + 1)`
+
+This is why jul30's `arm11-moe12x` (48 routed, top_k 3) was reported as 49
+experts and 12.25x. A matched-active grid that counts only routed experts is
+wrong on both axes: it under-counts active width by 25% at top_k 3.

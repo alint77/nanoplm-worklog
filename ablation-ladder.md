@@ -223,25 +223,53 @@ Runs after 2a and before 2c, because we expect to ship both and the question is
 how to configure them, not whether to use them. These are small grids, not
 single arms.
 
-**MoE. Matched ACTIVE parameters** (decided). Every cell has the same active
-MLP parameters per layer as the dense base, 8,257,536, so the comparison is at
-equal compute per token and total parameters vary.
+**MoE. Matched ACTIVE parameters** (decided), **swiglu** (decided, and also
+forced: `use_moe=true` refuses geglu, `config.py:432`).
 
-Matched-active means `top_k x expert_intermediate = 2688`. Granularity is how
-finely the same active width is split; sparsity is how many experts it is
-chosen from.
+**There is always a shared expert.** `MoELayer` builds one
+`ModernBertSwiGLUMLP(config)` that processes every token (`moe.py:468`), at the
+same `intermediate_size` as a routed expert, with no knob to disable it. So:
 
-| cell | granularity g | expert `intermediate_size` | `moe_top_k` | sparsity E/k | `moe_num_experts` |
-|---|---|---|---|---|---|
-| G4-S4 | 4 | 672 | 4 | 4 | 16 |
-| G4-S8 | 4 | 672 | 4 | 8 | 32 |
-| G8-S4 | 8 | 336 | 8 | 4 | 32 |
-| G8-S8 | 8 | 336 | 8 | 8 | 64 |
+- active MLP width = `(moe_top_k + 1) x intermediate_size`
+- sparsity = `(moe_num_experts + 1) / (moe_top_k + 1)`
 
-**The control is dense swiglu, not the geglu base.** `use_moe=true` requires
-`mlp_activation` in `{swiglu, srelu}` (`config.py:432`), so an MoE arm run
-against the geglu base would differ in two things at once. 2b runs after 2a, so
-the swiglu arm A2 supplies the matched control at the same LR.
+That is why jul30's 48 routed experts at top_k 3 were reported as 49 total and
+12.25x, not 16x. Any grid that ignores the shared expert is wrong on both axes.
+
+Matched active means `(top_k + 1) x expert_inter = 2688`.
+
+| cell | active experts | `moe_top_k` | expert `intermediate_size` | sparsity | `moe_num_experts` | total params |
+|---|---|---|---|---|---|---|
+| g4-S8 | 4 | 3 | 672 | 8x | 31 | 2.13B |
+| g4-S12 | 4 | 3 | 672 | 12x | 47 | 3.12B |
+| g8-S8 | 8 | 7 | 336 | 8x | 63 | 2.13B |
+| g8-S12 | 8 | 7 | 336 | 12x | 95 | 3.12B |
+
+Dense base is 0.40B for reference. Active MLP params per layer are 8,257,536 in
+every cell, same as dense.
+
+**Why 8x is still in the grid even though jul30 landed on 12x.** The jul30
+sparsity ablation (h1024/L19, inter 512, top_k 3, 3 h wall-clock matched):
+
+| arm | total experts | sparsity | total params | final loss | MFU | tokens |
+|---|---|---|---|---|---|---|
+| moe4x | 13 | 3.25x | 0.41B | 2.2999 | 40.2% | 37.7B |
+| moe8x | 33 | 8.25x | 0.95B | 2.2768 | 38.4% | 36.0B |
+| moe12x | 49 | 12.25x | 1.37B | **2.2688** | 38.7% | 36.3B |
+
+12x won, but the returns collapse: -0.0231 from 3.25x to 8.25x, then only
+-0.0080 from 8.25x to 12.25x while total parameters grew 44% (0.95B to 1.37B).
+And jul30 never measured a noise floor, so -0.0080 may well be noise.
+
+Keeping 8x costs 2 runs and re-tests that conclusion against a sigma we will
+actually have. If 12x wins again by more than 2 sigma, it is settled properly.
+If it does not, we ship the model that is 1B parameters smaller for free.
+
+The control is dense swiglu (arm A2 from 2a), not the geglu base.
+
+Two known issues to handle: quack GEMM rejects bf16 so eval falls back to
+cutlass, and the CUTLASS grouped-GEMM JIT has a multi-rank build race, so
+prebuild the `.so` before `srun`.
 
 **Canon layers.** `canon_layers_mode` x `canon_layer_set`.
 
