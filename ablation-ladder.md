@@ -83,6 +83,7 @@ Two things to get right when the decay campaign is set up:
 
 - `decay_steps` at 8.33% of the steps the stable phase actually completed
   gives every arm the same 30 min of decay in wall clock, whatever its speed.
+- `decay_shape: linear` (set in the base; inert during the stable phase).
 - **Round `decay_steps` to a multiple of `eval_steps`.** Eval fires on
   `global_step % eval_steps == 0 or at_wsd_stable_end` and there is no eval
   after the loop, so an unrounded `decay_steps` ends the run with no score.
@@ -121,50 +122,66 @@ treatment. Naming the rule now is the whole point of pre-registering it.
 
 ---
 
-## Tier 1 - settle the optimizer (10 runs, SUBMITTED)
+## Tier 1 - settle the optimizer (two waves, 24 runs)
 
-This runs first. Everything downstream is a single-factor arm off the winner,
-so the optimizer and its LR have to be decided before anything else means
-anything.
+Runs first. Everything downstream is a single-factor arm off the winner.
 
 Only AdamW and NorMuon. Muon, NorDion2 and stable_adamw are dropped.
 
-| arm | LR sweep | runs |
-|---|---|---|
-| AdamW | 2.5e-5, 5e-5, 1e-4, 2e-4, 4e-4 | 5 |
-| NorMuon, `spectral_norm` | 1.25e-3, 2.5e-3, 5e-3, 1e-2, 2e-2 | 5 |
+**NorMuon sits at dion's defaults, not nanoplm's.** nanoplm deviates from the
+library on four knobs, none of them documented as deliberate:
 
-The `rms_norm` control row was considered and dropped.
+| knob | dion | nanoplm | base now |
+|---|---|---|---|
+| `adjust_lr` | spectral_norm | rms_norm | spectral_norm |
+| `cautious_wd` | false | true | false |
+| `nesterov` | false | true | false |
+| `epsilon` | 1e-8 | 1e-7 | 1e-8 |
+| `weight_decay` | 0.01 | 0.01 | 0.01 |
+| `lr` | 0.01 | 1e-3 | swept |
+
+Verified by building the real optimizer from the config and diffing every
+param-group value against `NorMuon.__init__` defaults: zero deviations.
+
+AdamW stays at stock ModernBERT (beta2 0.98, wd 1e-5), since that is the
+paper's baseline. Its wd and beta2 become arms in Wave 2 rather than
+assumptions.
+
+### Wave 1 - learning rate (10 runs)
+
+| arm | grid | runs |
+|---|---|---|
+| AdamW, stock ModernBERT | 2.5e-5, 5e-5, 1e-4, 2e-4, 4e-4 | 5 |
+| NorMuon, dion defaults | 2.5e-3, 5e-3, 1e-2, 2e-2, 4e-2 | 5 |
+
+The NorMuon grid is centred on dion's own default of 1e-2, which is the LR that
+default was chosen for under `spectral_norm`.
 
 **If the winner sits at either end of a grid, the optimum is outside it and the
-grid must be extended before Tier 0 runs on it.**
+grid gets extended before anything is built on it.**
 
-**Why the spectral sweep is centred at 5e-3 and not 1e-3.** The two scalings
-multiply the square-matrix LR by 6.4 (`rms_norm`) and 1.0 (`spectral_norm`).
-An LR tuned at 1e-3 under rms sits near 6.4e-3 under spectral. Centring at
-1e-3 would sweep the wrong decade and NorMuon would lose for no reason.
+### Wave 2 - weight decay and beta2, at Wave 1's winning LR (14 runs)
 
-**Why spectral_norm.** See `decisions.md`. Short version: rms_norm exists for
-LR compatibility with AdamW, which we do not need because we sweep; and it
-scales by `max(fan_out, fan_in)`, so it cannot tell a tall matrix from a wide
-one, which matters in a study that varies matrix shapes.
+Depends on Wave 1. Do not submit blind.
 
-**The optional control row** reproduces the jul30 "NorMuon is much better"
-claim at the new shape under the old scaling, and shows whether spectral's
-transfer benefit costs anything at fixed scale. Worth 5 runs if we want the
-parameterization decision to rest on data rather than on the argument above.
+| optimizer | knob | values | base | runs |
+|---|---|---|---|---|
+| AdamW | `adam_weight_decay` | 0.01, 0.1 | 1e-5 | 2 |
+| AdamW | `adam_beta2` | 0.95, 0.999 | 0.98 | 2 |
+| NorMuon | `muon_weight_decay` | 1e-5, 0.1 | 0.01 | 2 |
+| NorMuon | `muon_beta2` | 0.9, 0.98 | 0.95 | 2 |
+| NorMuon | `muon_cautious_weight_decay` | true | false | 1 |
+| NorMuon | `muon_nesterov` | true | false | 1 |
+| both | winners re-run for confirmation | | | 4 |
 
-**Two knobs held equal so this is an optimizer comparison and nothing else:**
-weight decay 1e-5 on both, cautious decay off. The dataclass would otherwise
-give NorMuon 0.01 with cautious decay against AdamW's 1e-5 plain.
-
-**LR policy for the NorMuon rows:** sweep `muon_learning_rate`, hold
-`adam_learning_rate` at the AdamW sweep's winner. NorMuon runs have both, and
-the AdamW group holds embeddings, the tied head, norms and biases.
+The last two single runs are worth their cost: nanoplm ships cautious decay and
+nesterov ON while dion ships them OFF, so somebody thought they mattered. Either
+they win, which vindicates the nanoplm default, or they do not and the base
+stays at the library default with evidence behind it.
 
 ---
 
-## Tier 2 - one factor at a time (about 85 runs)
+## Tier 2 - one factor at a time (about 65 runs)
 
 Each arm changes exactly one thing from the base. No arm builds on another.
 Each arm runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The
@@ -184,23 +201,50 @@ design, not a confound.
 | A5 | QK norm before RoPE | `reorder_RoPE_QKNorm` | order is not obviously settled |
 | A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
 | A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
-| A8 | tied embeddings | `tie_word_embeddings` | the base is now untied; this tests whether coupling the head to the embedding helps anyway |
-| A9 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
-| A10 | MLM 15% | `mlm_probability` | 30% is high |
-| A11 | MLM 40% | `mlm_probability` | the other direction |
-| A12 | span masking | `mlm_masking_strategy` | BERT-style spans vs per-token |
-| A13 | mask 100%, no 80/10/10 | `mask_replace_prob` | the 10/10 split is cargo-culted from BERT |
-| A14 | weight decay 0.1 | `adam_weight_decay` | 1e-5 is very low |
-| A15 | beta2 0.95 | `adam_beta2` | 0.98 is inherited |
+| A8 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
+| A9 | MLM 15% | `mlm_probability` | 30% is high |
+| A10 | MLM 40% | `mlm_probability` | the other direction |
+| A11 | mask 100%, no 80/10/10 | `mask_replace_prob` | the 10/10 split is cargo-culted from BERT |
+
+Struck: tied embeddings (the base is untied and we are not testing it back) and
+span masking. `eval_mlm_masking_strategy: token` stays pinned, and token
+masking is now the only strategy anyone runs.
+
+Weight decay and beta2 moved to Tier 1, where they belong: they are optimizer
+knobs and both optimizers need their own.
 
 `mlp_activation` accepts only `{swiglu, geglu, srelu}`, and `srelu` is
 `relu(x).square()` (`config.py:513`). So A2 and A3 are the complete set of
 alternatives to the geglu base, not a sample of one.
 
-### 2b. Optimizers
+### 2b. MoE and canon layers
 
-Moved to Tier 1 and cut to AdamW vs NorMuon. Muon, NorDion2 and stable_adamw
-are dropped.
+Runs after 2a and before 2c, because we expect to ship both and the question is
+how to configure them, not whether to use them. These are small grids, not
+single arms.
+
+**MoE.** Sparsity and granularity:
+
+| axis | key | values |
+|---|---|---|
+| sparsity | `moe_num_experts` / `moe_top_k` | 2 settings |
+| granularity | expert width (`intermediate_size` per expert) | 2 settings |
+
+OPEN QUESTION, needed before this runs: is MoE compared at **matched active
+params** or **matched total params**? They give different answers and the paper
+has to say which. This is not something we can pick for you.
+
+Two known issues to handle: quack GEMM rejects bf16 so eval falls back to
+cutlass, and the CUTLASS grouped-GEMM JIT has a multi-rank build race, so
+prebuild the `.so` before `srun`.
+
+**Canon layers.** `canon_layers_mode` x `canon_layer_set`.
+
+By running after 2a we know the norm result. The CuTe canon backend covers
+rms_conv and bare conv only, so on a layernorm base canon takes a slow Triton
+fallback and would lose on wall-clock for a kernel reason rather than an
+architectural one. If rmsnorm (A1) wins in 2a, this resolves itself. If it does
+not, canon runs handicapped and the writeup has to say so.
 
 ### 2c. Our own ideas
 
@@ -209,20 +253,31 @@ each arm's best LR, counted in the budget.
 
 | id | change | key |
 |---|---|---|
-| C1 | residual lambdas | `use_resid_lambdas` (see P3) |
-| C2 | canon layers | `use_canon_layers` |
-| C3 | RePO | `use_repo` |
-| C4 | ProRes | `use_prores` |
-| C5 | paired-head attention | `use_paired_head_attention` |
-| C6 | mHC-lite | `use_mhc_lite` |
-| C7 | NOBLE | `use_noble` |
-| C8 | Loopie | `use_loopie` |
-| C9 | Huginn recycling | `use_huginn_looping` |
-| C10 | MoE | `use_moe` (two known issues: quack GEMM rejects bf16 so eval falls back to cutlass, and the CUTLASS grouped-GEMM JIT has a multi-rank build race, so prebuild the .so before srun) |
+| C1 | residual lambdas | `use_resid_lambdas` |
+| C2 | x0 lambdas | `use_x0_lambdas` |
+| C3 | ProRes | `use_prores` |
+| C4 | paired-head attention | `use_paired_head_attention` |
+| C5 | mHC-lite | `use_mhc_lite` (SEE NOTE) |
+| C6 | NOBLE | `use_noble` |
+| C7 | Loopie | `use_loopie` |
+| C8 | Huginn recycling | `use_huginn_looping` |
 
-MoE is not parameter-matched to the base by construction. Decide before running
-whether it is compared at matched active params or matched total params, and
-say which in the paper.
+Struck: RePO.
+
+P3 is resolved and C1/C2 are unblocked. The lambdas are fp32 parameters that
+FSDP casts to bf16 for the forward, with fp32 masters in the optimizer. That is
+the ordinary mixed-precision path every other weight takes, not the
+`cast_forward_inputs` problem that broke the RoPE angles. Values near 1.0 have
+~0.4% spacing in bf16 and updates accumulate in the fp32 master. Verified by
+building the model under a real 1-rank FSDP2 with `MixedPrecisionPolicy` and
+printing the dtypes.
+
+**NOTE on C5 (mHC-lite).** DSv4 and GLM 5.3 Flash apply it at the *sublayer*
+level, attention and MLP separately. nanoplm applies it once per *layer*
+boundary. So this arm as written does not test what those papers tested. Settle
+the placement before running it; it probably wants its own issue on nanoplm.
+
+MoE and canon layers moved to their own tier, 2b, which runs before this one.
 
 ---
 
@@ -262,16 +317,17 @@ A win that does not survive the scale-up does not go in the paper.
 
 | tier | runs | note |
 |---|---|---|
-| 1 | 10 | optimizer + LR, runs first. SUBMITTED |
+| 1 | 24 | optimizer: Wave 1 LR (10, SUBMITTED), Wave 2 wd/beta2 (14, blocked on Wave 1) |
 | 0 | 6 | noise floor on the winning optimizer + LR |
-| 2a | 45 | 15 arms x 3 LRs |
+| 2a | 33 | 11 arms x 3 LRs |
 
-| 2c | 30 | 10 arms x 3 LRs |
-| 2c seeds | 10 | second seed on our own ideas |
+| 2b | ~8 | MoE sparsity x granularity, canon mode x set |
+| 2c | 24 | 8 arms x 3 LRs |
+| 2c seeds | 8 | second seed on our own ideas |
 | 3 | ~16 | greedy ladder |
 | 4 | ~12 | leave-one-out |
 | 5 | 6 | transfer + fp8 |
-| **total** | **~135-140** | **~13,000 GPU-hours** |
+| **total** | **~125** | **~12,000 GPU-hours** |
 
 Strike rows if that is too many. The tiers are ordered so cutting from the
 bottom of 2c costs the least.

@@ -182,3 +182,31 @@ hold, not a queue position. A held job stays held after the reservation ends.
 So a submission that straddles a maintenance window needs an explicit
 `scontrol release <jobids>` afterwards. `squeue` showing PENDING is not enough
 to conclude a job will eventually run: check the Reason field.
+
+## Why NCCL time ballooned in the TE RoPE run
+
+It did not. NCCL kernel *duration* includes the time a rank sits inside the
+collective waiting for its peers. The fused kernel made the compute before the
+all-gather faster, so ranks arrived earlier and waited longer, and the recorded
+NCCL time grew from 628 ms to 1704 ms while step time did not move at all.
+
+The collective was the critical path the whole time. Total NCCL time is not a
+cost; only exposed (non-overlapped) comms is.
+
+## The lambdas are bf16 in the forward, and that is fine
+
+`resid_lambdas` and `x0_lambdas` are fp32 parameters. Under FSDP2 with
+`param_dtype=bf16` they are bf16 in the forward with fp32 masters in the
+optimizer, which is the ordinary mixed-precision path every weight takes. It is
+NOT the `cast_forward_inputs` problem that broke the RoPE angles, because those
+were non-parameter tensors passed as forward args at large magnitudes.
+
+Values near 1.0 have ~0.4% spacing in bf16 and updates accumulate in the fp32
+master. Verified under a real 1-rank FSDP2 with `MixedPrecisionPolicy`.
+
+## nanoplm deviates from dion's optimizer defaults on four knobs
+
+`adjust_lr` (rms_norm vs spectral_norm), `cautious_wd` (true vs false),
+`nesterov` (true vs false), `epsilon` (1e-7 vs 1e-8). None is documented as
+deliberate. The series now runs dion's defaults, and the last two are arms in
+Tier 1 Wave 2 so the deviation gets tested rather than inherited.
