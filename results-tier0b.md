@@ -92,27 +92,30 @@ NorMuon, eval loss at 10.07B tokens:
 
 | LR | 1M | 2M | 4M |
 |---|---|---|---|
-| 2.5e-3 | pending | - | 2.3474 |
-| 3.5e-3 | 2.3106 | - | pending |
-| 5e-3 | **2.3086** | **2.3118** | 2.3248 / 2.3250 |
+| 2.5e-3 | 2.3169 | - | 2.3474 |
+| 3.5e-3 | 2.3106 | - | 2.3337 |
+| 5e-3 | **2.3086 / 2.3089** | **2.3118** | 2.3248 / 2.3250 |
 | 7e-3 | 2.3114 | **2.3118** | **2.3200** |
 | 1e-2 | 2.3367 | 2.3209 | 2.3212 |
 | 1.41e-2 | - | 2.3516 | 2.3369 |
 | 2e-2 | - | 2.4582 | 2.3882 |
 
-**sigma_repeat = 0.0002**, from the 4M/5e-3 duplicate pair (2.3248 vs 2.3250).
+**sigma_repeat = 0.00025**, from two duplicate pairs: 4M/5e-3 (2.3248 vs
+2.3250) and 1M/5e-3 (2.3086 vs 2.3089).
 Run-to-run noise from kernel non-determinism is negligible at this horizon.
 sigma_seed (different data order) is still unmeasured and will be larger.
 
-**Minima are bracketed at 1M and 4M.** Loss rises on both sides: at 1M,
-3.5e-3 (2.3106) > 5e-3 (2.3086) < 7e-3 (2.3114); at 4M, 5e-3 (2.3248) >
-7e-3 (2.3200) < 1e-2 (2.3212) < 1.41e-2. 2M has 5e-3 and 7e-3 tied and 1e-2
-worse; its low side is untested but both neighbours turn up below 5e-3.
+**Minima are bracketed on both sides at 1M and 4M.** 1M rises away from 5e-3
+in both directions (2.5e-3 2.3169, 3.5e-3 2.3106, 5e-3 2.3086, 7e-3 2.3114,
+1e-2 2.3367). 4M rises away from 7e-3 in both directions (3.5e-3 2.3337,
+5e-3 2.3248, 7e-3 2.3200, 1e-2 2.3212, 1.41e-2 2.3369). 2M has 5e-3 and 7e-3
+tied with 1e-2 worse; its low side is untested but both neighbours turn up
+below 5e-3. COMPLETE: 26 runs.
 
 ## Findings
 
 **Best per batch: 1M 2.3086, 2M 2.3118, 4M 2.3200.** Monotone, and the
-1M-to-4M gap of 0.0114 is 57x sigma_repeat, so it is real signal.
+1M-to-4M gap of 0.0114 is 45x sigma_repeat, so it is real signal.
 
 **The optimal LR barely moves with batch**: 5e-3 at 1M and 2M, 7e-3 at 4M.
 That is a factor 1.4 for a 4x batch change, roughly B^0.24. Neither sqrt(B) nor
