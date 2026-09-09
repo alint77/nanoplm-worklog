@@ -82,18 +82,65 @@ only batch given a 7e-3 point.
 Nothing about the batch axis can be concluded until each batch's LR curve has a
 real interior minimum, meaning a point where going lower makes the loss worse.
 
-## Round 3: bracket the minimum (running)
+## Round 3/4: minima bracketed (13 runs, two forks)
 
-Descending LR at the two extremes, 1M and 4M, at 5e-3, 3.5e-3 and 2.5e-3
-(jobs 1723615-1723620). 2M is dropped: it interpolates.
+Two sessions of the same fork submitted overlapping grids 34 s apart. Three
+runs were exact duplicates; those are kept because same-config repeats measure
+sigma_repeat, which Tier 0 was going to spend runs on.
 
-Decision rule, fixed now: compare each batch at its own bracketed minimum. If
-4M's minimum is within noise of 1M's, take 4.2M for the 4x scale-out headroom.
+NorMuon, eval loss at 10.07B tokens:
 
-## Method note
+| LR | 1M | 2M | 4M |
+|---|---|---|---|
+| 2.5e-3 | pending | - | 2.3474 |
+| 3.5e-3 | 2.3106 | - | pending |
+| 5e-3 | **2.3086** | **2.3118** | 2.3248 / 2.3250 |
+| 7e-3 | 2.3114 | **2.3118** | **2.3200** |
+| 1e-2 | 2.3367 | 2.3209 | 2.3212 |
+| 1.41e-2 | - | 2.3516 | 2.3369 |
+| 2e-2 | - | 2.4582 | 2.3882 |
 
-Three successive "results" moved because each round added a single LR point
-instead of bracketing the optimum. A best-over-LR comparison is only meaningful
-once every arm's curve has turned around. This applies directly to Tier 1: with
-NorMuon losing 0.107 to a 1.4x LR change, a grid that does not bracket the
-minimum will rank optimizers by grid placement rather than by merit.
+**sigma_repeat = 0.0002**, from the 4M/5e-3 duplicate pair (2.3248 vs 2.3250).
+Run-to-run noise from kernel non-determinism is negligible at this horizon.
+sigma_seed (different data order) is still unmeasured and will be larger.
+
+**Minima are bracketed at 1M and 4M.** Loss rises on both sides: at 1M,
+3.5e-3 (2.3106) > 5e-3 (2.3086) < 7e-3 (2.3114); at 4M, 5e-3 (2.3248) >
+7e-3 (2.3200) < 1e-2 (2.3212) < 1.41e-2. 2M has 5e-3 and 7e-3 tied and 1e-2
+worse; its low side is untested but both neighbours turn up below 5e-3.
+
+## Findings
+
+**Best per batch: 1M 2.3086, 2M 2.3118, 4M 2.3200.** Monotone, and the
+1M-to-4M gap of 0.0114 is 57x sigma_repeat, so it is real signal.
+
+**The optimal LR barely moves with batch**: 5e-3 at 1M and 2M, 7e-3 at 4M.
+That is a factor 1.4 for a 4x batch change, roughly B^0.24. Neither sqrt(B) nor
+linear describes it, and both overshot badly at 4M (2e-2 cost 0.068 against
+7e-3, 4e-2 cost 0.19).
+
+**NorMuon's LR curve is asymmetric.** The bottom is flat: 0.003 across 3.5e-3
+to 7e-3 at 1M. Above the optimum it is punishing: 1e-2 costs 0.028 and 2e-2
+costs 0.15. So Tier 1's grid should sit at or below the optimum, not straddle
+it from above.
+
+**AdamW comparison.** AdamW's best anywhere was 2.3716 (2M, 2e-4). NorMuon's
+worst bracketed point beats it. NorMuon wins by 0.05 to 0.06 at every batch,
+and the earlier reading that "NorMuon's advantage vanishes at 4M" was purely an
+LR artifact.
+
+## The batch decision, and its caveat
+
+A real tradeoff rather than a free lunch:
+
+- 1M: best loss, caps the world size at 16 GPUs / 4 nodes
+- 4M: costs 0.0114 eval loss, allows 64 GPUs at full local batch
+
+**Caveat that limits how far this generalises:** the probe is at 10.07B tokens
+and a real ablation run is ~44B. Larger batches typically catch up over a longer
+horizon, since the per-step disadvantage shrinks as the number of steps grows.
+So 0.0114 is an upper bound on the cost at the real horizon, not a measurement
+of it. Confirming would take a pair of 6 h runs at 1M and 4M.
+
+DECISION NEEDED: accept 0.0114 (upper bound) for 4x scale-out headroom, or keep
+1M and the 4-node ceiling.
