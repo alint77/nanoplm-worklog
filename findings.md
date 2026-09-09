@@ -503,3 +503,43 @@ network or straggler problem on that node group.
 Practical follow-up: log exposed comms per run and flag any run whose compute
 union matches the control but whose step time does not. That is a bad node, and
 it should be resubmitted rather than interpreted.
+
+## Gate every run on its trace at ~5 minutes, not at 6.5 hours
+
+The profiler window is steps 15-23, so the trace lands about 5 minutes in
+(compile dominates). A run that drew a bad node group can therefore be detected
+and requeued for ~7 minutes of waste instead of 6.5 hours.
+
+**The metric has to be self-normalizing**, or an arm that legitimately does more
+compute looks degraded. Step time cannot do it. This works:
+
+    exposed_comms / compute_union
+
+An arm doing more compute grows the denominator AND hides comms better, so a
+high ratio always means comms-bound, never "this arm is heavy".
+
+Measured over 24 Tier 1 traces:
+
+| verdict | count | ratio |
+|---|---|---|
+| healthy | 21 | 1.4% to 6.6% |
+| degraded | 3 | 9.1% to 10.5% |
+
+The gap between 6.6% and 9.1% is empty, so the threshold sits at 8%.
+
+**Bad nodes repeat.** `jpbo-001-[36-37,41,43]` flagged twice, on two different
+arms. `jpbo-013-[05,08,11,14]` once. So an exclude-list is worth keeping rather
+than just retrying blind: `run/bad_nodes.txt`, seeded with those 8 nodes.
+
+Note a different subset of the same rack, `jpbo-001-[09,11-12,15]`, came in at
+5.3%. The problem is specific nodes, not the rack.
+
+**Tooling:** `tools/trace_gate.py` (analyse one trace, exit 1 if degraded) and
+`tools/submit_gated.sh` (submit, wait for trace, requeue elsewhere on failure,
+up to MAX_TRIES, accumulating the exclude list).
+
+**This does not retroactively invalidate the Tier 1 results.** Equal-step
+comparison already removes the throughput penalty, so a slow node costs tokens,
+not loss-per-token, and the LR and weight-decay rankings were read at equal
+steps. Only the wall-clock column was affected, which is why the cautious
+verdict was wrong.
