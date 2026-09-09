@@ -93,15 +93,21 @@ NorMuon, eval loss at 10.07B tokens:
 | LR | 1M | 2M | 4M |
 |---|---|---|---|
 | 2.5e-3 | 2.3169 | - | 2.3474 |
-| 3.5e-3 | 2.3106 | - | 2.3337 |
+| 3.5e-3 | 2.3100 / 2.3106 | - | 2.3337 |
 | 5e-3 | **2.3086 / 2.3089** | **2.3118** | 2.3248 / 2.3250 |
 | 7e-3 | 2.3114 | **2.3118** | **2.3200** |
 | 1e-2 | 2.3367 | 2.3209 | 2.3212 |
 | 1.41e-2 | - | 2.3516 | 2.3369 |
 | 2e-2 | - | 2.4582 | 2.3882 |
 
-**sigma_repeat = 0.00025**, from two duplicate pairs: 4M/5e-3 (2.3248 vs
-2.3250) and 1M/5e-3 (2.3086 vs 2.3089).
+**sigma_repeat ~ 0.0004**, from three duplicate pairs (an accidental gift from
+the two forks submitting the same configs): 1M/5e-3 2.3086 vs 2.3089,
+1M/3.5e-3 2.3100 vs 2.3106, 4M/5e-3 2.3248 vs 2.3250. Diffs 0.0003, 0.0006,
+0.0002.
+
+This is sigma_repeat only: same config, same seed, so it measures kernel
+non-determinism. sigma_seed (different data order) is unmeasured and will be
+larger. Tier 0 still owes us that.
 Run-to-run noise from kernel non-determinism is negligible at this horizon.
 sigma_seed (different data order) is still unmeasured and will be larger.
 
@@ -115,7 +121,7 @@ below 5e-3. COMPLETE: 26 runs.
 ## Findings
 
 **Best per batch: 1M 2.3086, 2M 2.3118, 4M 2.3200.** Monotone, and the
-1M-to-4M gap of 0.0114 is 45x sigma_repeat, so it is real signal.
+1M-to-4M gap of 0.0114 is ~29x sigma_repeat, so it is real signal.
 
 **The optimal LR barely moves with batch**: 5e-3 at 1M and 2M, 7e-3 at 4M.
 That is a factor 1.4 for a 4x batch change, roughly B^0.24. Neither sqrt(B) nor
