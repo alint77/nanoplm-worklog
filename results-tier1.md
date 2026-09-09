@@ -48,26 +48,64 @@ two independent measurements agree on it.
 having drawn nodes 8% faster and run 500 extra steps. At equal steps 7e-3 wins.
 The ordering of the AdamW grid was unaffected.
 
-## Wave 2: weight decay, beta2, and the two nanoplm deviations (10 runs, RUNNING)
+## Wave 2: weight decay, beta2, and the nanoplm deviations (10 runs, COMPLETE)
 
-At the Wave 1 optima. Controls are the Wave 1 winners themselves
-(t1a-adamw-lr5.6e-4 at 2.2350, t1a-normuon-lr7e-3 at 2.2061), so no control
-runs are repeated.
+At the Wave 1 optima. Controls are the Wave 1 winners, so nothing was re-run.
+Both columns given, because the rule from findings.md applies: same-compute arms
+(weight decay, beta2) are judged at equal steps, compute-changing arms
+(cautious decay, which is ~5% slower) at the wall-clock stop.
 
-| optimizer | knob | values | base |
-|---|---|---|---|
-| AdamW @ 5.6e-4 | `adam_weight_decay` | 0.01, 0.1 | 1e-5 |
-| AdamW @ 5.6e-4 | `adam_beta2` | 0.95, 0.999 | 0.98 |
-| NorMuon @ 7e-3 | `muon_weight_decay` | 1e-5, 0.1 | 0.01 |
-| NorMuon @ 7e-3 | `muon_beta2` | 0.9, 0.98 | 0.95 |
-| NorMuon @ 7e-3 | `muon_cautious_weight_decay` | true | false |
-| NorMuon @ 7e-3 | `muon_nesterov` | true | false |
+**NorMuon**, control `t1a-normuon-lr7e-3`: wall-clock 2.2038 (11000 steps),
+equal-step 2.2095.
 
-The last two test the nanoplm defaults that deviate from dion's. nanoplm ships
-cautious decay and nesterov ON, dion ships them OFF, and nothing documents the
-deviation as deliberate. Either they win, which vindicates nanoplm, or they do
-not and the base keeps dion's defaults with evidence behind it.
+| arm | steps | wall-clock | equal-step | delta (equal) |
+|---|---|---|---|---|
+| **wd 1e-5** | 10500 | **2.2014** | **2.2045** | **-0.0050** |
+| cautious=true | 10000 | 2.2077 | 2.2077 | -0.0018 |
+| beta2 0.9 | 10500 | 2.2072 | 2.2102 | +0.0007 |
+| nesterov=true | 10500 | 2.2068 | 2.2102 | +0.0007 |
+| beta2 0.98 | 10500 | 2.2085 | 2.2114 | +0.0019 |
+| wd 0.1 | 10500 | 2.2497 | 2.2514 | +0.0419 |
 
-AdamW is tuned alongside NorMuon even though it has already lost, because it is
-the paper's baseline and a poorly tuned baseline would weaken the NorMuon
-claim rather than strengthen it.
+**AdamW**, control `t1a-adamw-lr5.6e-4`: wall-clock 2.2350, equal-step 2.2387.
+
+| arm | steps | wall-clock | equal-step | delta (equal) |
+|---|---|---|---|---|
+| beta2 0.95 | 10500 | 2.2353 | 2.2390 | +0.0003 |
+| wd 0.01 | 11000 | 2.2317 | 2.2398 | +0.0011 |
+| wd 0.1 | 10500 | 2.2380 | 2.2421 | +0.0034 |
+| beta2 0.999 | 10500 | 2.2440 | 2.2485 | +0.0098 |
+
+### Findings
+
+**One real winner: NorMuon weight decay 1e-5 instead of dion's 0.01, worth
+-0.0050.** That is 12x sigma_repeat and it wins in both columns. The only arm in
+the wave that clearly beats its control.
+
+**Weight decay matters asymmetrically for NorMuon.** 1e-5 gains 0.0050, 0.1
+loses 0.0419. An 8x span around dion's 0.01 moves the loss by 0.047, so this is
+not a knob to leave at a library default.
+
+**Both nanoplm deviations are rejected, and the wall-clock rule is what
+rejects one of them.** `nesterov=true` is +0.0007, a tie. `cautious_wd=true`
+looks like a small win at equal steps (-0.0018) but it is ~5% slower per step
+(2076 ms against ~1980 ms), so on its own wall-clock budget it managed 10000
+steps against the control's 11000 and finished at 2.2077 against 2.2038. Under
+the pre-registered rule for compute-changing arms it LOSES. Had we compared it
+at equal steps, we would have adopted a change that is slower and no better.
+
+**AdamW's stock ModernBERT settings are already optimal among those tested.**
+wd 1e-5 and beta2 0.98 beat every alternative. Nothing to change in the paper's
+baseline, which is a convenient result: the baseline is not being handicapped.
+
+**beta2 is close to flat for NorMuon** (0.9 and 0.98 both within 0.002 of 0.95)
+and clearly matters for AdamW on the high side (0.999 costs 0.0098).
+
+### Pending: sigma_seed
+
+Every delta except NorMuon wd (-0.0050) and wd 0.1 (+0.0419) is under 0.004.
+sigma_repeat is 0.0004 but sigma_seed is unmeasured and will be larger, so the
+small deltas are not yet distinguishable from noise. Tier 0 measures it next.
+
+The wd 1e-5 result should be adopted only after Tier 0 confirms 0.0050 clears
+2 x sigma_seed. It is written here as a candidate, not yet folded into the base.
