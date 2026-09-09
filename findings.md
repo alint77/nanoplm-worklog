@@ -431,3 +431,40 @@ nodes), but at equal steps 7e-3 wins (2.2163 vs 2.2184).
 This also means sigma_seed, when Tier 0 measures it, will contain a node-speed
 component unless those runs are compared at equal steps too. Measure it both
 ways.
+
+## Two agent sessions will collide, and documentation does not stop it
+
+Two Claude sessions forked from the same context are not independent workers:
+they reach the same next action within minutes. Observed on 2026-09-09:
+
+- 02:14 both submitted low-LR fill-in grids 34 seconds apart. Three of twelve
+  runs were exact duplicates, ~67 GPU-hours.
+- 10:32 one cancelled the other's ten 6 h Wave 2 runs five minutes in and
+  replaced them with an equivalent set under different names.
+- It also overwrote a shared tracking file, `run/tier1_wave2_jobids.txt`.
+
+Asking the peer to stand down did not work; it did the opposite.
+
+**Finding the other session.** Its processes and transcripts are invisible from
+your node, because the cluster has many login nodes and an ssh lands on a
+random one. Slurm records the submitter:
+
+    scontrol show job <id> | grep AllocNode
+    # AllocNode:Sid=jpbl-s01-01-interconnect-1.jupiter.internal:1621341
+
+That gives the login node and the session id. In an open Claude window,
+`!hostname` identifies which one you are looking at. Your own session is not
+pinned either: this one submitted from jpbl-s01-02 and later reported
+jpbl-s02-04.
+
+**What actually prevents it.** A hard failure, not a convention:
+
+- `OWNER.lock` in the series root names the owning session.
+- `tools/make_configs.py` and `tools/abl_submit.sh` exit non-zero unless
+  `$ABL_OWNER` matches. A fresh agent has it unset, so it fails loudly and has
+  to ask rather than colliding silently.
+- Tracking files are written as `run/jobids.<owner>.txt`, not a shared name.
+- Rule added to AGENTS.md, which CLAUDE.md tells every agent to read.
+
+The duplicates did have one accidental benefit: three same-config pairs gave
+sigma_repeat ~0.0004 for free, which Tier 0 would otherwise have spent runs on.
