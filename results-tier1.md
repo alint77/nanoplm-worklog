@@ -86,13 +86,30 @@ the wave that clearly beats its control.
 loses 0.0419. An 8x span around dion's 0.01 moves the loss by 0.047, so this is
 not a knob to leave at a library default.
 
-**Both nanoplm deviations are rejected, and the wall-clock rule is what
-rejects one of them.** `nesterov=true` is +0.0007, a tie. `cautious_wd=true`
-looks like a small win at equal steps (-0.0018) but it is ~5% slower per step
-(2076 ms against ~1980 ms), so on its own wall-clock budget it managed 10000
-steps against the control's 11000 and finished at 2.2077 against 2.2038. Under
-the pre-registered rule for compute-changing arms it LOSES. Had we compared it
-at equal steps, we would have adopted a change that is slower and no better.
+**Both nanoplm deviations are ties. CORRECTED: cautious decay does NOT cost
+throughput.** `nesterov=true` is +0.0007. `cautious_wd=true` is -0.0018 at
+equal steps, and equal steps is the correct comparison for it because it does
+not change compute.
+
+An earlier version of this file claimed cautious was ~5% slower and therefore
+lost on wall clock. That was wrong. Its run was the only one on jpbo-013 and
+the trace shows the slowdown is not the arm:
+
+| | cautious (jpbo-013) | wd1e-5 (jpbo-001) |
+|---|---|---|
+| GEMM launches | 11,861 | 11,861 |
+| GEMM us/launch | 680.5 | 676.6 (ratio 1.006) |
+| `multi_tensor_apply` | 75.2 ms | 75.7 ms |
+| compute union | 13,286 ms | 13,436 ms |
+| exposed NCCL/step | 174.2 ms | 89.8 ms |
+| step time | 2091 ms | 1981 ms |
+
+`multi_tensor_apply` holds the optimizer's elementwise work and is identical, so
+cautious decay adds nothing measurable. Compute union is 1% LOWER. The 110 ms
+step difference is the 84 ms/step of extra exposed comms on that node group.
+
+Verdict: cautious decay is a tie, arguably a marginal win, and stays off only
+because -0.0018 does not clear the noise floor. It is not slower.
 
 **AdamW's stock ModernBERT settings are already optimal among those tested.**
 wd 1e-5 and beta2 0.98 beat every alternative. Nothing to change in the paper's

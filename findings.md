@@ -468,3 +468,38 @@ jpbl-s02-04.
 
 The duplicates did have one accidental benefit: three same-config pairs gave
 sigma_repeat ~0.0004 for free, which Tier 0 would otherwise have spent runs on.
+
+## Classify an arm as compute-changing from the TRACE, never from intuition
+
+I wrote that cautious weight decay cost ~5% throughput and therefore lost on
+wall clock. That was wrong, and the way it was wrong is instructive.
+
+Cautious decay ran at 2091 ms/step against ~1980 ms for its siblings, and it was
+the only Wave 2 run on jpbo-013. The trace shows the arm is not responsible:
+
+- GEMM: 11,861 launches in both runs (identical work), 680.5 vs 676.6 us per
+  launch, ratio 1.006. The GPUs are the same speed.
+- `multi_tensor_apply`, where the optimizer's elementwise work lives: 75.2 vs
+  75.7 ms. Identical. Cautious decay adds nothing measurable.
+- compute union: 13,286 vs 13,436 ms. Cautious does 1% LESS compute.
+- exposed NCCL: 174.2 vs 89.8 ms per step.
+
+The 110 ms step difference is the 84 ms/step of extra exposed comms. It is a
+network or straggler problem on that node group.
+
+**Two rules follow.**
+
+1. Whether an arm is "compute-changing" is a measurement, not a guess. Compare
+   compute union in the trace against the control. Only then is the wall-clock
+   comparison the right one. Applying the wall-clock rule on the assumption that
+   an arm is slower will attribute node noise to the arm, which is exactly what
+   happened here.
+2. **Exposed comms varies 2x between node groups** (89.8 to 174.2 ms/step, 4.5%
+   to 8.3% of the step). That is a per-run lottery unrelated to the arm, and it
+   explains the 9.4% step-time spread seen across identical configs in Wave 1.
+   Default to comparing at equal steps; reserve wall-clock for arms whose
+   compute union actually differs.
+
+Practical follow-up: log exposed comms per run and flag any run whose compute
+union matches the control but whose step time does not. That is a bad node, and
+it should be resubmitted rather than interpreted.
