@@ -45,19 +45,55 @@ them.
 0.107. AdamW's entire spread over every batch and LR is 0.026. Tier 1 needs a
 denser LR grid for NorMuon than 2x spacing.
 
-## The confound, and the fill-in runs
+## The confound, and why the first two rounds were not conclusive
 
-For NorMuon the winning LR at every batch is the LOWEST one tested: 1e-2 at 1M,
-1.41e-2 at 2M, 2e-2 at 4M. Both scaling rules raise LR with batch, so "bigger
-batch is worse" and "lower LR is better" are entangled. The larger batches may
-simply have run further above their optimum.
+For NorMuon the winning LR was, at every batch, the LOWEST one tested. Both
+scaling rules raise LR with batch, so "bigger batch is worse" and "lower LR is
+better" were entangled.
 
-Four fill-in runs on the low side (1723131-1723134): NorMuon 1M at 7e-3, 2M at
-1e-2, 4M at 1e-2, 4M at 1.41e-2. If 4M improves materially at a lower LR, the
-batch penalty is smaller than it looks and 4.2M is back on the table.
+Round 2 (low-LR fill-ins) confirmed that and reversed the reading:
 
-## Not yet decided
+| NorMuon | LR | eval |
+|---|---|---|
+| 1M | 1e-2 | 2.3367 |
+| 1M | 7e-3 | **2.3114** |
+| 2M | 1e-2 | 2.3209 |
+| 2M | 1.41e-2 | 2.3516 |
+| 2M | 2e-2 | 2.4582 |
+| 4M | 1e-2 | 2.3212 |
+| 4M | 1.41e-2 | 2.3369 |
+| 4M | 2e-2 | 2.3882 |
+| 4M | 4e-2 | 2.5116 |
 
-Nothing is decided until the fill-ins land and Tier 0 gives a noise floor. The
-1M-to-2M NorMuon gap is 0.015 and could be noise; the 1M-to-4M gap is 0.052 and
-probably is not.
+Two things this establishes:
+
+- At a FIXED LR of 1e-2 the batch axis is flat: 1M 2.3367, 2M 2.3209,
+  4M 2.3212. 2M and 4M tie and both beat 1M.
+- NorMuon's optimum does NOT scale with batch the way either rule predicts.
+  1e-2 wins at 2M and 4M alike, and both sqrt(B) and linear overshot at 4M.
+
+**But the minimum is still not bracketed.** At every batch the best LR is the
+lowest one tried, and each new low point beats the last: 2e-2 to 1.41e-2 to
+1e-2 to 7e-3. So whichever batch happens to be probed lowest looks best, and
+the apparent batch ranking has now flipped twice for that reason alone. Round 1
+made big batches look bad; round 2 made 1M look best, purely because 1M was the
+only batch given a 7e-3 point.
+
+Nothing about the batch axis can be concluded until each batch's LR curve has a
+real interior minimum, meaning a point where going lower makes the loss worse.
+
+## Round 3: bracket the minimum (running)
+
+Descending LR at the two extremes, 1M and 4M, at 5e-3, 3.5e-3 and 2.5e-3
+(jobs 1723615-1723620). 2M is dropped: it interpolates.
+
+Decision rule, fixed now: compare each batch at its own bracketed minimum. If
+4M's minimum is within noise of 1M's, take 4.2M for the 4x scale-out headroom.
+
+## Method note
+
+Three successive "results" moved because each round added a single LR point
+instead of bracketing the optimum. A best-over-LR comparison is only meaningful
+once every arm's curve has turned around. This applies directly to Tier 1: with
+NorMuon losing 0.107 to a 1.4x LR change, a grid that does not bracket the
+minimum will rank optimizers by grid placement rather than by merit.
