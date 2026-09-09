@@ -192,24 +192,88 @@ while our base runs AdamW at `1e-5` plain. Left alone, the optimizer
 comparison would also have been a weight-decay comparison. Both are now 1e-5,
 cautious off.
 
-## Global batch size is settled before the optimizer
+## Global batch size: 4.19M tokens (DECIDED)
 
-Both optimizers' LR optima move with batch size, so an LR sweep at one batch is
-not transferable to another. Tier 0b runs first.
+Settled before the optimizer, because both optimizers' LR optima move with
+batch size, so an LR sweep at one batch does not transfer to another.
 
-The reason to want a bigger batch is scale-out headroom, not comms. At
-`micro_batch_seqs` 128 and 512-token sequences each GPU takes 65,536 tokens, so
-global batch caps the world size that can run at full local batch: 1M caps us
-at 16 GPUs, 2M at 32, 4M at 64, 8M at 128. Below that ceiling the local batch
-shrinks and utilisation drops.
+**Measured, 26 runs, token-matched at 10.07B tokens each** (Tier 0b; not
+wall-clock matched, so the batch effect is isolated). Best achievable eval loss
+per batch, each at its own bracketed LR minimum:
 
-Comms is not the reason: exposed NCCL is 5.2 ms of a 511 ms step (1.0%), so
-gradient accumulation saves under 1% of throughput.
+| batch | best LR | eval @ 10.07B |
+|---|---|---|
+| 1.05M | 5e-3 | 2.3086 |
+| 2.10M | 5e-3 / 7e-3 | 2.3118 |
+| 4.19M | 7e-3 | 2.3200 |
 
-**ESM C uses 4.2M tokens** (verified from the ESM Cambrian blog), at 512 context
-in stage 1, with LR 5e-4 for their 300M. That LR is 2.5x above what sqrt(B)
-scaling from our 1M anchor would give at 4M, so the probe tests each larger
-batch at two LRs, sqrt(B) and linear, and takes the better.
+**Chose 4.19M despite it being 0.0114 worse.** Four reasons, in order of
+weight:
+
+1. **The 0.0114 is an upper bound, not the cost at our horizon.** It was
+   measured at 10.07B tokens; a real ablation run is ~44B. A large batch's
+   per-step disadvantage shrinks as the number of optimizer steps grows, so the
+   gap at 44B is smaller than 0.0114 and possibly zero. Confirming it exactly
+   would take a pair of 6 h runs, which we judged not worth 200 GPU-hours.
+2. **Scale-out headroom.** Global batch caps the world size that can run at
+   full local batch. At `micro_batch_seqs` 128 and 512-token sequences each GPU
+   takes 65,536 tokens, so 1M caps us at 16 GPUs (4 nodes) and 4M allows 64
+   GPUs (16 nodes). Below that ceiling the local batch shrinks, GEMMs get
+   smaller and utilisation drops. The ablations themselves run on 4 nodes
+   either way; this is about the model we eventually train.
+3. **It biases no comparison.** Every arm runs at the same batch, so the
+   0.0114 is a constant offset on all of them, not a differential effect. What
+   it buys is that the ablation results describe the batch we would actually
+   train at.
+4. **It matches ESM C's 4.2M**, verified from the ESM Cambrian blog (stage 1,
+   512 context), which keeps our numbers comparable to the obvious reference
+   point.
+
+Explicitly NOT a reason: comms. Exposed (non-overlapped) NCCL is 5.2 ms of a
+511 ms step, 1.0%, so gradient accumulation saves under 1% of throughput.
+Anyone reaching for a bigger batch to save collectives at this scale is
+reaching for nothing.
+
+Consequences recorded for the writeup:
+
+- `warmup_steps` drops from 1000 to 250, holding warmup at 1.05B TOKENS rather
+  than at a step count. Keeping 1000 steps would have quadrupled warmup to 4.2B
+  tokens, 9.5% of a 6 h run instead of 2.4%.
+- grad_accum becomes 4 at 16 GPUs. A 6 h run is ~10,568 optimizer steps and
+  ~44.3B tokens, against ~42,270 steps for the same tokens at 1M.
+- The batch was chosen at 400M parameters. The 600M transfer runs in Tier 5
+  have a different critical batch, and the writeup must say so.
+
+## Learning rate: measured, not assumed
+
+Tier 0b also produced the LR curves, and three things came out of them that
+change how Tier 1 is run:
+
+**The optimum barely moves with batch.** 5e-3 at 1M, 5e-3 at 2M, 7e-3 at 4M: a
+factor 1.4 across a 4x batch change, roughly B^0.24. Neither sqrt(B) nor linear
+scaling describes it, and both overshot badly at 4M (sqrt(B) put us at 2e-2,
+costing 0.068; linear at 4e-2, costing 0.19). Our Tier 1 grids are therefore
+anchored on measured optima, not on a scaling rule.
+
+**NorMuon's LR curve is asymmetric.** The bottom is flat, 0.003 across 3.5e-3
+to 7e-3 at 1M, but above the optimum it is punishing: 1e-2 costs 0.028 and 2e-2
+costs 0.15. So a grid should sit at and below the optimum rather than straddle
+it from above. An earlier plan anchored at 1e-2 with 2x spacing would have
+ranked NorMuon by grid placement rather than merit.
+
+**NorMuon beats AdamW at every batch by 0.05 to 0.06.** AdamW's best anywhere
+was 2.3716. NorMuon's worst bracketed point beats it. An earlier reading that
+the advantage vanished at 4M was purely an artifact of NorMuon being run above
+its optimum there.
+
+## Noise floor: sigma_repeat ~ 0.0004
+
+Three same-config, same-seed pairs (an accident of two agent sessions
+submitting overlapping grids): 2.3086/2.3089, 2.3100/2.3106, 2.3248/2.3250.
+
+This measures kernel non-determinism only. **sigma_seed, from different data
+order, is unmeasured and will be larger**, and it is sigma_seed that the
+pre-registered 2-sigma win threshold refers to. Tier 0 still owes us that.
 
 ## MoE is compared at matched active parameters
 
