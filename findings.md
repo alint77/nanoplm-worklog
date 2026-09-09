@@ -398,3 +398,36 @@ Throughput after the fixes is unchanged: 501 ms / 51.8% MFU against 511 ms /
 these died about 40 s in. And a `bash -x` launcher echoes its own comments into
 stderr, so grepping stderr for an error string can match the comment that
 documents it. Both cost a wrong conclusion tonight.
+
+## Node-speed variation is ~9% and it outweighs the effects we are measuring
+
+Ten Wave 1 runs, identical except learning rate, landed on different nodes and
+ran at median step times from 1826 ms to 1998 ms. A 9.4% spread with no
+architectural cause.
+
+Under wall-clock matching that becomes a token-budget difference: 9880 steps on
+the fastest allocation versus 9020 on the slowest, 860 steps apart. At the
+late-run slope of -0.0085 loss per 1000 steps, those 860 steps are worth
+**0.0073 loss**.
+
+That is larger than the effects we are trying to resolve. Adjacent LR points in
+Wave 1 differ by 0.002 to 0.005, so node placement alone can reorder them, and
+it did: at 6 h wall clock NorMuon 5e-3 looked best (2.2142, on the fastest
+nodes), but at equal steps 7e-3 wins (2.2163 vs 2.2184).
+
+**Rule for the series:**
+
+- Arms whose compute per step is IDENTICAL (learning rate, weight decay, beta2,
+  seed, masking rate, rope theta, norm type) must be compared **at equal
+  steps**, not at the wall-clock stop. Their throughput differences are pure
+  node noise.
+- Arms that genuinely change compute per step (GQA, MoE, activation, attention
+  pattern, sequence length) are compared at the wall-clock stop, because there
+  the throughput difference IS the arm and the design intends it to count. But
+  node noise of ~0.007 still sits on top and has to be part of sigma.
+- Every run logs eval vs step, so both comparisons are available after the
+  fact. Report both.
+
+This also means sigma_seed, when Tier 0 measures it, will contain a node-speed
+component unless those runs are compared at equal steps too. Measure it both
+ways.
