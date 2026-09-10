@@ -114,8 +114,16 @@ locked to the stable runs.
 
 ## Tier order note
 
-Order is Tier 0b (batch), then Tier 1 (optimizer), then Tier 0 (noise floor),
-then the rest. The noise floor has to be measured
+Order is Tier 0b (batch), Tier 1 (optimizer), Tier 0 (noise floor),
+**Tier 1c (MLM objective)**, then Tier 2 (architecture).
+
+Tier 1c was moved ahead of the architecture arms on 2026-09-10. The masking
+recipe defines the training objective itself, not a property of the model, so
+every architecture result is measured against whatever objective is in the
+base. Settling it first means Tier 2 measures architecture rather than
+architecture-crossed-with-a-half-tuned-objective. The MLM arms were originally
+A9/A10/A11 inside Tier 2a; Tier 2a was cancelled mid-flight and those arms
+became this tier. The noise floor has to be measured
 on the optimizer and LR everything else will use, otherwise sigma is measured
 against one base and the arms are compared against another.
 
@@ -205,6 +213,47 @@ stays at the library default with evidence behind it.
 
 ---
 
+## Tier 1c - the MLM objective (15 runs, RUNNING)
+
+Runs before the architecture arms. The base is the Tier 1 winner: NorMuon
+7e-3, wd 1e-5.
+
+A 5 x 3 factorial rather than one-at-a-time, because the masking rate and the
+corruption split plausibly interact: at a low masking rate the 10% random and
+10% keep are a larger share of an already small signal.
+
+| | mask/random/keep 80/10/10 | 90/5/5 | 100/0/0 |
+|---|---|---|---|
+| mlm 15% | run | run | run |
+| mlm 20% | run | run | run |
+| mlm 25% | run | run | run |
+| **mlm 30% (base)** | **control** | run | run |
+| mlm 40% | run | run | run |
+
+The `(30%, 80/10/10)` cell is the current base and doubles as the control.
+A fresh control is required because the base changed after Tier 1: weight decay
+moved from dion's 0.01 to 1e-5, so the older base numbers do not transfer.
+
+**Why this tier is interpretable at all.** Eval masking is pinned at 15% token
+with an 80/10/10 split and a fixed seed, independent of what an arm trains at
+(`eval_mlm_probability` and friends). Every cell is therefore scored on the
+identical task. Without that fix, an arm trained at 15% would also be *scored*
+at 15% while the base was scored at 30%, and the comparison would be
+meaningless. That was a real defect in the pipeline, fixed in `4e3bbfc`.
+
+The three probabilities are ratios, not a constrained simplex: the collator
+normalises them (`p_mask = mask_token_probability / total`), so `(1.0, 0, 0)`
+is valid.
+
+All 15 run at the base LR of 7e-3. The masking recipe changes the task, not the
+model shape or the update scale, so the LR optimum should not move much; the
+winner gets re-checked at 5e-3 and 1e-2 before adoption.
+
+**After this tier the base is set to the winning cell**, and Tier 2's
+architecture arms are deltas from that.
+
+---
+
 ## Tier 2 - one factor at a time (about 65 runs)
 
 Each arm changes exactly one thing from the base. No arm builds on another.
@@ -226,9 +275,6 @@ design, not a confound.
 | A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
 | A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
 | A8 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
-| A9 | MLM 15% | `mlm_probability` | 30% is high |
-| A10 | MLM 40% | `mlm_probability` | the other direction |
-| A11 | mask 100%, no 80/10/10 | `mask_replace_prob` | the 10/10 split is cargo-culted from BERT |
 
 Struck: tied embeddings (the base is untied and we are not testing it back) and
 span masking. `eval_mlm_masking_strategy: token` stays pinned, and token
@@ -386,7 +432,8 @@ A win that does not survive the scale-up does not go in the paper.
 | 0b | 10 | global batch size, runs first. SUBMITTED |
 | 1 | 24 | optimizer: Wave 1 LR (10, blocked on 0b), Wave 2 wd/beta2 (14, blocked on Wave 1) |
 | 0 | 6 | noise floor on the winning optimizer + LR |
-| 2a | 33 | 11 arms x 3 LRs |
+| 1c | 15 | MLM objective, 5 rates x 3 splits |
+| 2a | 24 | 8 arms x 3 LRs (MLM arms moved to 1c) |
 
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set |
 | 2c | 27 | 9 arms x 3 LRs |
