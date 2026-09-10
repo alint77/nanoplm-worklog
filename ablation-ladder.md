@@ -1,5 +1,13 @@
 # Ablation ladder
 
+> **Matching rule (2026-09-10).** Compute-neutral arms (LR, weight decay,
+> betas, masking, seed) run **fixed-step**. Arms that change compute per step
+> (anything architectural) run **wall-clock matched**. Within an architecture
+> tier, the per-variant LR sweep is fixed-step and the comparison between
+> variants is wall-clock. See `prereg.md`.
+
+
+
 Status: Tier 1 submitted 2026-09-08 (10 jobs, ids in
 `sep07_abl/run/tier1_jobids.txt`). Tier 2 onward is still open for review.
 
