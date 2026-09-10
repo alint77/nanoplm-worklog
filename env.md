@@ -56,3 +56,22 @@ near its inode limit.
 - `TORCHINDUCTOR_COORDINATE_DESCENT_TUNING=1`. About +2.3 MFU points, paid in
   compile time, which is outside the wall-clock budget.
 - per-job TMPDIR on fscratch, and every cache redirected there.
+
+## Evaluation
+
+`nanoplm eval` runs biotrainer's autoeval. The released biotrainer 2.0.0
+cannot run the contact framework, so the venv carries **PR #192**
+(`peymanvahidi/biotrainer`, `fix/v2-migration-findings`) pinned at `ed33f6a`,
+editable from `sep07_abl/pkgs/biotrainer-pr192`, installed `--no-deps` so it
+never re-resolves the quack/cutlass pins the MoE kernels need.
+
+```
+sep07_abl/eval/
+  eval-*.yaml    one config per evaluated checkpoint
+  data/          benchmark datasets (biotrainer custom_storage_path)
+  out/           autoeval reports and per-framework caches
+  logs/
+```
+
+Runs on one login-node GH200; 31.5 min for PGYM + PBC contact in development
+mode. See `results-eval.md`.
