@@ -1,0 +1,159 @@
+# Method
+
+The rules, fixed before the arms run. The point of writing them down first is
+that they cannot be adjusted after seeing the numbers. That is the specific
+failure of the jul30 series.
+
+## What decides
+
+**Deciding:** biotrainer PBC contact and PGYM, run on the stored checkpoints.
+Of those, **long-range contact P@L on `selected_protein`** is the number to
+report (see "How sharp each metric is" below).
+
+**Secondary:** eval loss. Diagnostic, but the only signal available while runs
+are in flight. Scored at a fixed masking recipe (15%, 80/10/10, token) with a
+fixed mask seed, decoupled from whatever the arm trains at, so arms that change
+the training masking are still scored on the same task.
+
+**Not deciding:** MFU, step time, throughput.
+
+## Matching: fixed step or wall clock
+
+- An arm that **changes compute per step** (MoE, canon, mHC-lite, QK-norm, GQA,
+  attention pattern, activation, width, depth) is **wall-clock matched**. A
+  slower architecture gets fewer steps in six hours and pays for the slowdown
+  itself. That is what makes the comparison honest.
+- An arm that **does not** (learning rate, weight decay, betas,
+  cautious/nesterov, masking rate, masking split, seed, decay shape) is
+  **fixed-step**: `max_steps: N`, with `max_wallclock_hours` left as a safety
+  net only.
+- Inside an architecture tier the two combine: the per-variant LR sweep is
+  fixed-step, the comparison between variants is wall-clock. Tuning is a
+  compute-neutral question asked within one architecture; the comparison is not.
+
+**Why.** Wall-clock matching buys fairness only when arms differ in cost. When
+they do not, it injects node-speed variance into every comparison. On
+compute-neutral arms it left checkpoints spanning 672 steps, and that spread
+correlated with downstream long P@L at **r = 0.89 across six identical
+configurations**, accounting for 54% of what was being reported as the
+downstream noise floor. Measured directly: three byte-identical runs have
+sigma 0.00010 at equal steps and **0.00130 at their wall-clock stops**, 13x
+noisier for the same runs.
+
+**Cost: usually lower.** The Tier 1a NorMuon curves establish the LR ranking by
+step 1500, and the best-to-second gap *peaks* around steps 3500-5000
+(0.0034-0.0042) then shrinks to 0.0007 by step 10500 as the top two converge. A
+short fixed-step sweep separates learning rates better than a full-budget one.
+Tier 1d runs at `max_steps: 5000`: 40 node-hours instead of 96.
+
+Two things to get right:
+
+1. Size the Slurm limit from the *slowest* plausible step time. At 1.99 ms/step
+   worst case, 5000 steps is 2.8 h, so request 4 h. The launcher hardcodes
+   `--time=07:00:00`, so pass `SBATCH_EXTRA="--time=..."` to
+   `tools/submit_gated.sh` rather than over-requesting, which blocks backfill.
+2. An LR picked at a short fixed step is picked under a **constant** LR.
+   Stable-phase selection is biased low, because a higher LR cashes in more
+   during cooldown. Fine for ablations; the final long run must re-check the top
+   two LRs with decay attached.
+
+Arms already run under wall-clock matching (t0, t0b, t1a, t1b, t1c) are read at
+a common step of **10500** for loss. Downstream scores have no such correction,
+so read the step beside them and never use them to separate arms closer than
+0.010 in loss.
+
+## Noise floor
+
+Six runs at the decided base, NorMuon 7e-3: three same-seed repeats and three
+extra seeds. All six passed the trace gate first (exposed/compute 0.5% to 5.5%,
+threshold 8%), with the 8 known-bad nodes excluded.
+
+| run | seed | steps | wall-clock | equal-step (10500) |
+|---|---|---|---|---|
+| t0-rep1 | 42 | 11000 | 2.2041 | 2.2065 |
+| t0-rep2 | 42 | 10500 | 2.2064 | 2.2064 |
+| t0-rep3 | 42 | 10500 | 2.2063 | 2.2063 |
+| t0-seed43 | 43 | 10500 | 2.2077 | 2.2077 |
+| t0-seed44 | 44 | 10500 | 2.2058 | 2.2058 |
+| t0-seed45 | 45 | 10500 | 2.2078 | 2.2078 |
+
+| quantity | equal-step | wall-clock |
+|---|---|---|
+| sigma_repeat (3 identical runs) | **0.00010** | 0.00130 |
+| sigma_seed (4 seeds) | **0.00097** | 0.00176 |
+| **2 x sigma_seed** | **0.0019** | 0.0035 |
+
+sigma_seed is ~10x sigma_repeat, so run-to-run variation is dominated by data
+order rather than kernels, which is the healthy ordering. An earlier estimate
+from three accidental duplicate pairs in Tier 0b put sigma_repeat at 0.0004
+(2.3086/2.3089, 2.3100/2.3106, 2.3248/2.3250); the Tier 0 number supersedes it.
+
+**Sample-size caveat.** sigma_seed comes from n=4, so the 95% interval on sigma
+runs roughly 0.55x to 2.9x the estimate: 2 sigma could plausibly be anywhere
+from 0.0011 to 0.0056. That does not threaten the large wins, and it is why a
+-0.0050 result is adopted but flagged.
+
+## Decision rule
+
+An arm's best-over-LR result against the base's best-over-LR result. The arm
+wins only if it is better by more than **2 x sigma_seed = 0.0019** at equal
+steps. Inside that band it is reported as "no measured effect", not as a small
+win. Best-over-LR is optimistic on both sides, which is why the base gets the
+same treatment.
+
+## How sharp each metric is
+
+2 sigma over the six base replicates, divided by the metric's slope against
+eval loss, gives the loss gap each metric needs before it can call a winner:
+
+| metric | 2 sigma (replicates) | slope | loss gap needed |
+|---|---|---|---|
+| pgym scc | 0.0040 | -0.443 | 0.0091 |
+| casp14 local P@L | 0.0040 | -0.221 | 0.0179 |
+| casp15 local P@L | 0.0037 | -0.333 | 0.0113 |
+| selected_protein local P@L | 0.0064 | -0.477 | 0.0134 |
+| **selected_protein long P@L** | 0.0048 | **-1.972** | **0.0024** |
+| **selected_protein long AUC** | 0.0052 | **-2.277** | **0.0023** |
+
+Eval loss itself needs 0.0019, so **long-range contact prediction is nearly as
+sharp as val loss** and about 4x sharper than PGYM. Not because it is quieter,
+the noise is comparable, but because it responds 4.5x more steeply.
+
+Those 2-sigma figures are the raw spread of replicates taken at their
+wall-clock stops, so they still carry the step-count leak. Correcting the six
+replicates to step 10500 halves the long P@L floor to **0.0022** (see
+[findings.md](findings.md#wall-clock-matching-contaminates-downstream-scores-through-step-count)),
+which is what fixed-step arms will see. The raw number is used above because
+that is how the 52 already-run arms were scored.
+
+PGYM's own replicate sigma is 0.0018 over three same-seed repeats (2 sigma
+0.0037), 0.0024 over three seeds (2 sigma 0.0047), 0.0020 pooled. It confirms large decisions and cannot adjudicate
+small ones: a 0.001 loss gap (Tier 1c's 20% vs 25%) is invisible to it, a 0.15
+gap (100/0/0) is 14x what it needs.
+
+## Budget and what is frozen
+
+6 h stable phase, 4 nodes, 16 GH200, about 96 GPU-hours per run. The 30 min
+decay is a separate campaign off the saved checkpoints, not chained to the
+stable job; add ~8 GPU-hours per arm when it happens.
+
+Frozen across all arms: corpus (UniRef50, packed varlen, 512 tokens), 4.19M
+tokens per step, bf16, FSDP2 per-layer with fp32 reduce, `num_workers: 4`,
+`eval_steps: 500`, profiling on, and the pinned code SHA.
+
+**LR policy.** NorMuon runs have two learning rates: `muon_learning_rate` for
+the matrix parameters, `adam_learning_rate` for embeddings, the tied head, norms
+and biases. We sweep the muon one only and hold the adam one at what the AdamW
+sweep picked. Sweeping both would be a 2D search for a group that is tiny at
+vocab 32.
+
+**Seeds.** Tier 2: 1 seed per arm per LR, except our own ideas (2c), which get
+2. Tier 3 and 4: 2 seeds.
+
+## How the matching rule evolved
+
+Superseded, kept for the record. The first amendment (2026-09-10) had every arm
+from Tier 2 on write an extra checkpoint at step 10500 and compared downstream
+scores there. That patched the symptom. The rule above, from later the same day,
+removes the step spread at the source instead. Any further change to this file
+gets a dated entry here saying what changed and why.

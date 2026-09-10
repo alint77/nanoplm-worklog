@@ -11,7 +11,7 @@ steps. Downstream scores get no such correction, so read `step` beside them. A
 dash means the arm never logged that step.
 
 **long P@L** (selected_protein) is the sharpest downstream metric;
-see `11-results-eval-method.md`. Base replicate band 0.3891-0.3959, 2 sigma 0.0048.
+see `method.md`. Base replicate band 0.3891-0.3959, 2 sigma 0.0048.
 
 
 ## Base replicates (3 same-seed repeats, 3 seeds)
@@ -90,4 +90,4 @@ see `11-results-eval-method.md`. Base replicate band 0.3891-0.3959, 2 sigma 0.00
 
 52 arms. ESM C 300M through the same pipeline, for scale:
 PGYM total scc 0.412, casp14 local P@L 0.522 (development mode; see
-`11-results-eval-method.md` for the like-for-like comparison).
+`method.md` for the like-for-like comparison).
