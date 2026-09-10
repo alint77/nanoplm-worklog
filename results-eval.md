@@ -145,3 +145,58 @@ no equivalent correction, so the step has to be read alongside them.
 - Only the base checkpoint has been evaluated. Whether downstream scores can
   separate ablation arms at this token budget is untested; the val-loss
   threshold (2 sigma_seed = 0.0019) has no downstream equivalent yet.
+
+## What downstream can and cannot decide (PGYM, all 52 arms)
+
+PGYM finished for all 52 arms before the contact phase, which is enough to
+answer the question the series actually needs answered: does a downstream
+benchmark resolve our decisions, or only echo the loss?
+
+**It tracks loss closely.** Over the 26 arms that share a batch size and token
+budget (t0, t1a, t1b), Spearman(eval loss, PGYM scc) = **-0.873**, and a
+regression gives d(scc)/d(loss) = **-0.443**. Across the wider t0b range
+(loss 2.20 to 2.51) it stays monotone. So the benchmark is measuring
+something real and not noise.
+
+**It confirms the series' biggest decision.** NorMuon at its tuned 7e-3 vs
+AdamW at its tuned 5.6e-4: loss 2.2038 vs 2.2350 (+0.0312 for NorMuon), PGYM
+scc 0.3542 vs 0.3380 (+0.0162 for NorMuon). That is 3.4x the downstream
+threshold. The optimizer choice is now supported by two independent measures.
+
+**But its resolution is coarse.** The six base replicates give the downstream
+noise floor:
+
+| | sigma(scc) | 2 sigma |
+|---|---|---|
+| 3 same-seed repeats | 0.0018 | 0.0037 |
+| 3 different seeds | 0.0024 | 0.0047 |
+| all 6 | 0.0020 | 0.0040 |
+
+Replicates of the *same configuration* span 0.3492-0.3544. Combining
+2 sigma = 0.0047 with the slope, **a loss gap of 0.0106 is needed before PGYM
+can resolve it at 2 sigma**. For comparison, 2 sigma on eval loss is 0.0019.
+
+So PGYM is roughly **5x blunter than val loss**. Every Tier 1 arm, winners and
+rejects alike, lands inside the base replicate band:
+
+| arm | loss | scc | vs replicate band |
+|---|---|---|---|
+| tuned LR winner (7e-3) | 2.2038 | 0.3542 | inside |
+| wd winner (1e-5) | 2.2014 | 0.3540 | inside |
+| cautious (rejected on loss) | 2.2077 | 0.3528 | inside |
+| nesterov (rejected on loss) | 2.2068 | 0.3493 | inside |
+
+**How to use this.** Downstream scores confirm large decisions and cannot
+adjudicate small ones. Concretely:
+
+- The Tier 1c 20%-vs-25% masking question is ~0.001 in loss. PGYM **cannot**
+  settle it, and asking it to would be reading noise. Val loss at equal steps
+  remains the decision rule there.
+- The Tier 1c 100/0/0 question is ~0.15 in loss, 14x what PGYM needs. That one
+  it will settle decisively, which matters because eval loss is the measure
+  that is biased against those arms.
+- Reporting downstream numbers for an arm is still worth doing; treating a
+  0.002 downstream difference as a result is not.
+
+Whether the contact metrics resolve better or worse than PGYM is still open;
+they finish after this was written.
