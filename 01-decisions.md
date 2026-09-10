@@ -50,11 +50,10 @@ Two things fell out of this:
 2. Width is not free. 1024 divides the 128-wide Hopper GEMM tile and 960 does
    not. That gap is about 5 points.
 
-So of three goals (power-of-two width, ESM C aspect 32, ESMC-300M size) we can
-have any two. We picked the first two. The cost is real and goes in the paper:
-the model is 399.6M instead of 332.8M, and it sees about 16% fewer tokens in
-6 h than h1024/L27 would. Every arm pays this equally, so it does not bias
-anything inside the series.
+Three goals - power-of-two width, ESM C's aspect ratio 32, ESM C-300M's size -
+and we can have any two. We took the first two. The cost, which goes in the
+paper: 399.6M instead of 332.8M, and ~16% fewer tokens in 6 h than h1024/L27
+would give. Every arm pays it equally, so nothing inside the series is biased.
 
 ## Large model: h1152 / L36 = 574.8M
 
@@ -109,11 +108,11 @@ biotrainer lands.
 Eval used to inherit the whole training masking recipe, and redrew its masks
 on every call.
 
-Why: a model trained at 15% masking was also scored at 15% while the base was
-scored at 30%. Different tasks, incomparable losses, so any arm touching the
-masking recipe was uninterpretable. And redrawn masks meant every eval number
-carried mask noise. Both fixed. Eval is now pinned at 15% token masking with
-80/10/10 and a fixed seed, for every arm.
+Why: an arm trained at 15% masking was also *scored* at 15%, while the base
+was scored at 30% - different tasks, incomparable losses, so any arm touching
+the masking recipe was uninterpretable. Redrawn masks also put noise in every
+eval number. Both fixed: eval is pinned at 15% token masking with 80/10/10 and
+a fixed seed, for every arm.
 
 ## Untied embeddings in the base
 

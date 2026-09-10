@@ -60,7 +60,7 @@ changes the task, and 7e-3 was tuned at 30%. Two runs.
 ## Aside: this is why the eval-masking fix mattered
 
 Before 2026-09-08 the eval collator inherited `mlm_probability` from training
-and reseeded per call. Run on this grid, that version would have scored the
-40% arm on a 40%-masked eval and the 15% arm on a 15%-masked one, and reported
-that 15% wins by a mile - an artefact of task difficulty, in the direction of
-the prior we held going in.
+and reseeded every call. On this grid it would have scored the 40% arm on a
+40%-masked eval and the 15% arm on a 15%-masked one, then reported that 15%
+wins by a mile - an artefact of task difficulty, pointing exactly where our
+prior already did.

@@ -47,10 +47,8 @@ while local contacts are within 10-15%. PGYM sits about 0.07 scc below.
 Do not read the PGYM gap as a token-budget gap alone. This checkpoint trained
 at `mlm_probability: 0.30`, so it saw ~150 masked tokens per 512-token
 sequence; masked marginals masks exactly **one** position per forward. ESM C
-does not pay that distribution shift to the same degree. The gap is consistent
-with fewer tokens **and** a higher training masking rate, and Tier 1c is what
-separates them: if 15% wins there, some of this closes for reasons unrelated
-to val loss.
+pays less of that shift. The gap is consistent with fewer tokens *and* a
+higher masking rate, and Tier 1c is what separates the two.
 
 The contact numbers do not carry that confound. The categorical Jacobian feeds
 **unmasked** mutant sequences, so it never depends on the training masking
@@ -115,11 +113,11 @@ Notes that are load-bearing:
   (`eval/tools/warm_datasets.py`). Without that, 52 tasks race to preprocess
   the same `dataset_dir`.
 
-Eval loss is joined to the downstream scores from each run's Slurm log at the
-nearest eval step at or before the checkpoint step, plus a common-step column.
-The series is wall-clock matched, so arms stop at different steps and their
-end-of-run losses are not comparable to each other; the downstream scores have
-no equivalent correction, so the step has to be read alongside them.
+Eval loss comes from each run's Slurm log, at the nearest eval step at or
+before the checkpoint step, plus a common-step column. The series is wall-
+clock matched, so arms stop at different steps and end-of-run losses are not
+comparable across rows. Downstream scores have no such correction, so read the
+step beside them.
 
 ## Setup, for reproduction
 
@@ -215,12 +213,11 @@ eval loss - gives the loss gap each one needs before it can call a winner:
 | **selected_protein long P@L** | 0.0048 | **-1.972** | **0.0024** |
 | **selected_protein long AUC** | 0.0052 | **-2.277** | **0.0023** |
 
-Eval loss itself is 0.0019, so **long-range contact prediction is almost as
-sharp a discriminator as val loss**, and roughly 4x sharper than PGYM. It is
-not that it is less noisy - the noise is comparable - it is that it responds
-4.5x more steeply. This corrects the earlier reading, taken from PGYM alone,
-that downstream is uniformly ~5x blunter than loss. **Long-range contact P@L
-is the downstream number to report.**
+Eval loss itself is 0.0019, so **long-range contact prediction is nearly as
+sharp as val loss** and about 4x sharper than PGYM. Not because it is quieter
+- the noise is comparable - but because it responds 4.5x more steeply. That
+corrects the earlier PGYM-only reading that downstream is uniformly ~5x
+blunter. **Long-range contact P@L is the downstream number to report.**
 
 Re-testing the series' decisions on it, against a base replicate band of
 0.3891-0.3959:
@@ -246,9 +243,8 @@ reaches 0.2622, and `t0b-normuon-b4M-mid-1723134` at an almost identical loss
 of 2.3369 reaches 0.1813. Its PGYM score is unremarkable (0.2718 vs 0.2940),
 so only the long-range structure collapsed.
 
-The two linear-decay arms behave similarly (0.0384 and 0.0531 at losses 2.46
-and 2.51). The common thread among the collapsed arms is a higher learning
-rate or a decay shape that ended mid-schedule, but this is three points and a
-hypothesis, not a result. It is worth chasing because a case where val loss
-cannot see a downstream collapse is exactly the failure mode a loss-only
-ablation series is blind to.
+The two linear-decay arms look similar: 0.0384 and 0.0531 at losses 2.46 and
+2.51. The common thread is a higher learning rate or a decay that ended mid-
+schedule - three points and a hypothesis, not a result. Worth chasing, because
+val loss being blind to a downstream collapse is exactly what a loss-only
+series cannot catch.

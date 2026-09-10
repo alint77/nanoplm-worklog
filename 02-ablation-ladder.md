@@ -78,12 +78,10 @@ Storage: one checkpoint per run at 4.5 GB (`save_steps` is off), so about
 630 GB for the series. Only `pytorch_model.bin` (1.6 GB) is needed for
 biotrainer, so the optimizer state can be pruned later if space gets tight.
 
-Decoupling them is deliberate. Chaining with `--dependency=afterok` means a
-stable job that dies for any reason silently takes its decay job with it, and
-we would not find out until we went looking. Running the decay campaign
-separately also lets us decide the decay length after seeing the stable
-results, and it fits how the checkpoints get scored: biotrainer runs on them
-later anyway.
+Deliberate. With `--dependency=afterok`, a stable job that dies takes its
+decay job with it silently, and we would not notice until we looked. Running
+the decay campaign separately also lets us pick the decay length after seeing
+the stable results, and the checkpoints get scored later anyway.
 
 Slurm time limit is 7 h for a 6 h stable phase. The headroom covers compile,
 dataset setup and the final checkpoint write.
@@ -125,15 +123,16 @@ locked to the stable runs.
 Order is Tier 0b (batch), Tier 1 (optimizer), Tier 0 (noise floor),
 **Tier 1c (MLM objective)**, then Tier 2 (architecture).
 
-Tier 1c was moved ahead of the architecture arms on 2026-09-10. The masking
-recipe defines the training objective itself, not a property of the model, so
-every architecture result is measured against whatever objective is in the
-base. Settling it first means Tier 2 measures architecture rather than
-architecture-crossed-with-a-half-tuned-objective. The MLM arms were originally
-A9/A10/A11 inside Tier 2a; Tier 2a was cancelled mid-flight and those arms
-became this tier. The noise floor has to be measured
-on the optimizer and LR everything else will use, otherwise sigma is measured
-against one base and the arms are compared against another.
+Moved ahead of the architecture arms on 2026-09-10. Masking defines the
+training objective, not a property of the model, so every architecture result
+is measured against whatever objective the base happens to carry. Settle it
+first and Tier 2 measures architecture, not architecture crossed with a half-
+tuned objective.
+
+These arms were A9/A10/A11 inside Tier 2a until 2a was cancelled mid-flight.
+The noise floor also has to be measured on the optimizer and LR everything
+else will use, or sigma comes from one base and the arms are compared against
+another.
 
 ## Tier 0 - noise floor (6 runs, after Tier 1)
 
@@ -355,11 +354,11 @@ is gone, so sonicmoe checkpoints evaluate on the sonicmoe path.
 
 **Canon layers.** `canon_layers_mode` x `canon_layer_set`.
 
-By running after 2a we know the norm result. The CuTe canon backend covers
-rms_conv and bare conv only, so on a layernorm base canon takes a slow Triton
-fallback and would lose on wall-clock for a kernel reason rather than an
-architectural one. If rmsnorm (A1) wins in 2a, this resolves itself. If it does
-not, canon runs handicapped and the writeup has to say so.
+Running after 2a means we know the norm result. The CuTe canon backend covers
+rms_conv and bare conv only, so on a layernorm base canon falls back to slow
+Triton and would lose on wall-clock for a kernel reason, not an architectural
+one. If rmsnorm (A1) wins in 2a this resolves itself; if not, canon runs
+handicapped and the writeup says so.
 
 ### 2c. Our own ideas
 
@@ -380,13 +379,11 @@ each arm's best LR, counted in the budget.
 
 Struck: RePO.
 
-P3 is resolved and C1/C2 are unblocked. The lambdas are fp32 parameters that
-FSDP casts to bf16 for the forward, with fp32 masters in the optimizer. That is
-the ordinary mixed-precision path every other weight takes, not the
-`cast_forward_inputs` problem that broke the RoPE angles. Values near 1.0 have
-~0.4% spacing in bf16 and updates accumulate in the fp32 master. Verified by
-building the model under a real 1-rank FSDP2 with `MixedPrecisionPolicy` and
-printing the dtypes.
+P3 resolved, C1/C2 unblocked. The lambdas are fp32 parameters cast to bf16 for
+the forward, with fp32 masters in the optimizer: the ordinary mixed-precision
+path, not the `cast_forward_inputs` problem that broke the RoPE angles. Values
+near 1.0 have ~0.4% spacing in bf16 and updates accumulate in the fp32 master.
+Checked under a real 1-rank FSDP2 with `MixedPrecisionPolicy`.
 
 **C5a vs C5b (mHC-lite placement).** DSv4 and GLM 5.3 Flash apply it at the
 *sublayer* level, attention and MLP separately; nanoplm defaults to once per

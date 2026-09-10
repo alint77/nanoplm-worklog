@@ -42,12 +42,11 @@ difference is 1-2 ulps of rounding.
 
 ## Why our number is 2.4x the fork's own
 
-The fork's README reports **+1.21%** default and +1.51% with the flag, on a
-4-GPU 16-layer ModernBERT with 10 sliding-window layers. We measure +2.85% and
-+3.12%. Our model is **32 layers with 21 sliding-window** (`attn_layer_pattern:
-null` = full every third layer), so there is roughly twice as much of the
-changed path per step. That is the obvious explanation and it is consistent,
-but it was not tested here.
+Their README reports **+1.21%** default and +1.51% with the flag, on a 4-GPU
+16-layer ModernBERT with 10 sliding-window layers. We measure +2.85% and
++3.12%. Ours is **32 layers with 21 sliding-window** (`attn_layer_pattern:
+null`), so roughly twice as much of the changed path per step. Obvious
+explanation, consistent with the numbers, untested here.
 
 The opt-in forward flag adds only **+0.27 percentage points** over the default
 build. The README notes it regresses long sequences; at our 512-token cap that
@@ -56,13 +55,12 @@ the sensible choice.
 
 ## Does the 1-node number transfer to our 4-node runs?
 
-Yes, and this was checked rather than assumed. The A/B config puts 65,536
-tokens per GPU per micro-step with grad_accum 4, which is *identical per-GPU
-work* to the 4-node series runs. Stock reads 1936.6 ms here; `t0-rep1` on four
-nodes reads 1936-1945 ms. Nearly the same number, which independently confirms
-the trace finding that exposed inter-node comms is only a few percent in this
-configuration. Attention is therefore not a smaller share of a 4-node step, and
-the speedup should carry over.
+Yes, checked rather than assumed. The A/B puts 65,536 tokens per GPU per
+micro-step at grad_accum 4, identical per-GPU work to the 4-node runs. Stock
+reads 1936.6 ms here; `t0-rep1` on four nodes reads 1936-1945 ms. Nearly the
+same, which confirms that exposed inter-node comms costs only a few percent in
+this configuration. Attention is not a smaller share of a 4-node step, so the
+speedup should carry over.
 
 ## Recommendation: do not swap mid-series
 

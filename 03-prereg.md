@@ -67,12 +67,11 @@ Wall-clock matching leaves arms at different step counts, and downstream scores
 are read off whatever checkpoint an arm ended on, so node speed leaks straight
 into them (r = 0.89 among identical configurations; see `04-findings.md`).
 
-Every arm from Tier 2 on writes an extra checkpoint at **step 10500**, the
-common step already used for the loss column. Downstream comparisons within a
-tier use that checkpoint, not the wall-clock one. Arms already run (t0, t0b,
-t1a, t1b, t1c) have no such checkpoint; their downstream numbers are reported
-with the step beside them and are not used to separate arms whose loss gap is
-under 0.010.
+From Tier 2 on, every arm writes an extra checkpoint at **step 10500**, the
+common step the loss column already uses, and downstream comparisons within a
+tier use it rather than the wall-clock checkpoint. Already-run arms (t0, t0b,
+t1a, t1b, t1c) have none: report their downstream scores with the step beside
+them, and never use them to separate arms closer than 0.010 in loss.
 
 ## Amendment, 2026-09-10 (2): fixed-step for compute-neutral arms
 

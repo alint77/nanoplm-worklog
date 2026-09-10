@@ -315,11 +315,11 @@ All four parity-clean first (`_grouped_mm` matches cutlass exactly on out, dWi
 and dWo; sonicmoe within 1%, bf16 reduction order).
 
 sonicmoe fuses the dispatch gather into Wi's A-load and the scatter plus
-router-weight combine into Wo's epilogue. Every grouped-GEMM backend needs
-`moe_scatter_dispatch` and `moe_gather_combine` around it, which at g8-S12 is a
-materialized (458752, 1024) bf16 tensor, about 940 MB, touched roughly six
-times across forward and backward. That traffic is the gap. Swapping the GEMM
-cannot close it, which is why the field of candidates does not matter much.
+router-weight combine into Wo's epilogue. Every other grouped-GEMM backend
+needs `moe_scatter_dispatch` and `moe_gather_combine` around it: at g8-S12
+that is a materialized (458752, 1024) bf16 tensor, ~940 MB, touched about six
+times across forward and backward. That traffic is the gap, and swapping the
+GEMM cannot close it.
 
 The published record agrees: SonicMoE (ICLR 2026) beats ScatterMoE by 1.86x,
 MoMoE, MegaBlocks, Megatron and DeepGEMM++ on H100, at intermediate size 256,
@@ -573,14 +573,14 @@ of sample, not fitted on the points it corrects) cuts their spread:
 **Step spread accounted for 54% of what was being reported as the downstream
 noise floor.** The real floor is roughly half what `11-results-eval-method.md` states.
 
-Applying the same correction to Tier 1b flips three verdicts from tie to
-separated, including cautious weight decay, which ran 733 fewer steps than the
-base and moves from -0.0034 to +0.0058 once that is accounted for. **This is
-not a result.** It is evidence that the raw downstream comparison within a tier
-is confounded and cannot be trusted in either direction. Two cautions on the
-correction itself: the threshold it produces rests on six points, and the
-cautious arm stopped at 10303, which is 321 steps below the lowest replicate
-(10624), so it carries the largest correction with the least support.
+Corrected, three Tier 1b verdicts flip from tie to separated. Cautious weight
+decay is the starkest: it ran 733 fewer steps than the base, and goes from
+-0.0034 to +0.0058 once that is accounted for.
+
+**That is not a result.** It says the raw comparison is confounded, not that
+cautious wins. The correction is shaky too: its threshold rests on six points,
+and cautious stopped at 10303, which is 321 steps below the lowest replicate
+(10624), so it gets the biggest correction on the least support.
 
 **The loss verdicts are unaffected.** Tier 1b's decisions were made on the
 common-step loss column and stand as recorded.
