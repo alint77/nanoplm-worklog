@@ -543,3 +543,59 @@ comparison already removes the throughput penalty, so a slow node costs tokens,
 not loss-per-token, and the LR and weight-decay rankings were read at equal
 steps. Only the wall-clock column was affected, which is why the cautious
 verdict was wrong.
+
+## Wall-clock matching contaminates downstream scores through step count
+
+Found 2026-09-10, by the user reading the Tier 1b table: the optimizer knobs
+have no compute overhead, yet their checkpoints sit at different steps
+(10303-10975, a 672-step spread) purely because of node-to-node speed. Eval
+loss is protected from this by the common-step column. **Downstream scores are
+not**: they come from whatever checkpoint the arm happened to end on.
+
+Two independent estimates of the size of the effect agree:
+
+- **Predicted**, from the cross-arm slope d(long P@L)/d(loss) = -1.972 times
+  the per-step loss decline -7.0e-6: **1.38e-5 per step**.
+- **Measured**, regressing long P@L on checkpoint step across the six base
+  replicates: **1.26e-5 per step, Pearson r = +0.890**.
+
+r = 0.89 among *identical configurations*. The only thing that differs between
+those six runs is how many steps their node allowed.
+
+Correcting the replicates with the independent coefficient (so the test is out
+of sample, not fitted on the points it corrects) cuts their spread:
+
+| | 2 sigma | spread |
+|---|---|---|
+| raw | 0.0048 | 0.0068 |
+| corrected to step 10500 | **0.0022** | 0.0024 |
+
+**Step spread accounted for 54% of what was being reported as the downstream
+noise floor.** The real floor is roughly half what `results-eval.md` states.
+
+Applying the same correction to Tier 1b flips three verdicts from tie to
+separated, including cautious weight decay, which ran 733 fewer steps than the
+base and moves from -0.0034 to +0.0058 once that is accounted for. **This is
+not a result.** It is evidence that the raw downstream comparison within a tier
+is confounded and cannot be trusted in either direction. Two cautions on the
+correction itself: the threshold it produces rests on six points, and the
+cautious arm stopped at 10303, which is 321 steps below the lowest replicate
+(10624), so it carries the largest correction with the least support.
+
+**The loss verdicts are unaffected.** Tier 1b's decisions were made on the
+common-step loss column and stand as recorded.
+
+**Does a fixed step put arms in different schedule phases?** Not here. Every
+arm in t0/t1a/t1b/t1c runs `warmup_stable` and is still on the plateau at
+10500: `muon_lr` reads exactly 7.00e-03 at both step 10300 and 10500 in every
+arm checked. Step 10500 is therefore a clean comparison point. It would not be
+for the decay campaign, where the comparable milestone is end-of-decay, not a
+step number.
+
+**Rule, from here on:** every arm writes a checkpoint at the pre-registered
+common step in addition to its wall-clock one, so downstream scores are at
+equal steps by construction. Cost is 3.0 GB per run as the pipeline currently
+saves (1.6 GB weights + 1.6 GB optimizer); only the weights are needed for
+eval, and there is no model-only save option today, so either add one or prune
+the optimizer state afterwards.
+
