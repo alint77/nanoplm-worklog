@@ -42,9 +42,20 @@ no protein was skipped on either side:
 
 Read: the model has clearly learned protein structure, and the deficit is
 **concentrated in long-range contacts**, where it is roughly half of ESM C,
-while local contacts are within 10-15%. PGYM sits about 0.07 scc below. That
-is the expected shape for a model at 46B tokens against one trained far
-longer, and it gives the series a downstream axis that is not val loss.
+while local contacts are within 10-15%. PGYM sits about 0.07 scc below.
+
+Do not read the PGYM gap as a token-budget gap alone. This checkpoint trained
+at `mlm_probability: 0.30`, so it saw ~150 masked tokens per 512-token
+sequence; masked marginals masks exactly **one** position per forward. ESM C
+does not pay that distribution shift to the same degree. The gap is consistent
+with fewer tokens **and** a higher training masking rate, and Tier 1c is what
+separates them: if 15% wins there, some of this closes for reasons unrelated
+to val loss.
+
+The contact numbers do not carry that confound. The categorical Jacobian feeds
+**unmasked** mutant sequences, so it never depends on the training masking
+rate. Contacts are therefore the cleaner training-budget signal of the two,
+and the more defensible number for the paper.
 
 Both frameworks together took **31.5 min** on one GH200 (login node).
 
