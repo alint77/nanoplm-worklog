@@ -198,5 +198,55 @@ adjudicate small ones. Concretely:
 - Reporting downstream numbers for an arm is still worth doing; treating a
   0.002 downstream difference as a result is not.
 
-Whether the contact metrics resolve better or worse than PGYM is still open;
-they finish after this was written.
+## The contact metrics resolve much better than PGYM
+
+All 52 arms finished both frameworks. Measuring every metric the same way -
+2 sigma over the six base replicates, divided by the metric's slope against
+eval loss - gives the loss gap each one needs before it can call a winner:
+
+| metric | 2 sigma (replicates) | slope | loss gap needed |
+|---|---|---|---|
+| pgym scc | 0.0040 | -0.443 | 0.0091 |
+| casp14 local P@L | 0.0040 | -0.221 | 0.0179 |
+| casp15 local P@L | 0.0037 | -0.333 | 0.0113 |
+| selected_protein local P@L | 0.0064 | -0.477 | 0.0134 |
+| **selected_protein long P@L** | 0.0048 | **-1.972** | **0.0024** |
+| **selected_protein long AUC** | 0.0052 | **-2.277** | **0.0023** |
+
+Eval loss itself is 0.0019, so **long-range contact prediction is almost as
+sharp a discriminator as val loss**, and roughly 4x sharper than PGYM. It is
+not that it is less noisy - the noise is comparable - it is that it responds
+4.5x more steeply. This corrects the earlier reading, taken from PGYM alone,
+that downstream is uniformly ~5x blunter than loss. **Long-range contact P@L
+is the downstream number to report.**
+
+Re-testing the series' decisions on it, against a base replicate band of
+0.3891-0.3959:
+
+| decision | d(loss) | d(long P@L) | x threshold | verdict |
+|---|---|---|---|---|
+| NorMuon 7e-3 vs AdamW 5.6e-4 | +0.0312 | +0.0810 | 17.0 | separated |
+| NorMuon wd 1e-5 vs wd 0.1 | +0.0483 | +0.0205 | 4.3 | separated |
+| beta2 0.95 vs 0.9 | +0.0031 | +0.0041 | 0.9 | tie |
+| cautious off vs on | +0.0036 | +0.0035 | 0.7 | tie |
+| nesterov off vs on | +0.0027 | +0.0068 | 1.4 | separated (marginal) |
+
+Every verdict agrees with the one val loss gave. Two independent measures, same
+answers, including the two rejections. That is the strongest statement the
+series can make about its own method.
+
+## An arm where loss and structure disagree
+
+`t0b-normuon-b1M-1721969` has eval loss 2.3367 and long P@L of **0.0135** -
+essentially no long-range contact signal at all - while
+`t0b-normuon-b1M-lo-1723131`, at a *better but comparable* loss of 2.3114,
+reaches 0.2622, and `t0b-normuon-b4M-mid-1723134` at an almost identical loss
+of 2.3369 reaches 0.1813. Its PGYM score is unremarkable (0.2718 vs 0.2940),
+so only the long-range structure collapsed.
+
+The two linear-decay arms behave similarly (0.0384 and 0.0531 at losses 2.46
+and 2.51). The common thread among the collapsed arms is a higher learning
+rate or a decay shape that ended mid-schedule, but this is three points and a
+hypothesis, not a result. It is worth chasing because a case where val loss
+cannot see a downstream collapse is exactly the failure mode a loss-only
+ablation series is blind to.
