@@ -48,7 +48,7 @@ steps are worth about 0.004 at the late-run slope. At equal steps 7e-3 wins.
 Node placement moved step time from 1826 to 1998 ms across ten runs that differ
 only in learning rate, a 9.4% spread with no architectural cause. That is worth
 more loss than the gaps between adjacent LR points, so it can and did reorder
-them. See findings.md.
+them. See 04-findings.md.
 
 ## Storage note
 

@@ -4,7 +4,7 @@
 > betas, masking, seed) run **fixed-step**. Arms that change compute per step
 > (anything architectural) run **wall-clock matched**. Within an architecture
 > tier, the per-variant LR sweep is fixed-step and the comparison between
-> variants is wall-clock. See `prereg.md`.
+> variants is wall-clock. See `03-prereg.md`.
 
 
 
@@ -106,7 +106,7 @@ locked to the stable runs.
 ## Tier 0b - global batch size: DONE, 4.19M chosen
 
 26 runs, token-matched at 10.07B. Full numbers and reasoning in
-`results-tier0b.md` and `decisions.md`. Headlines:
+`07-results-tier0b-batch-size.md` and `01-decisions.md`. Headlines:
 
 - best per batch: 1M 2.3086, 2M 2.3118, **4M 2.3200** (each at its own
   bracketed LR minimum)

@@ -571,7 +571,7 @@ of sample, not fitted on the points it corrects) cuts their spread:
 | corrected to step 10500 | **0.0022** | 0.0024 |
 
 **Step spread accounted for 54% of what was being reported as the downstream
-noise floor.** The real floor is roughly half what `results-eval.md` states.
+noise floor.** The real floor is roughly half what `11-results-eval-method.md` states.
 
 Applying the same correction to Tier 1b flips three verdicts from tie to
 separated, including cautious weight decay, which ran 733 fewer steps than the

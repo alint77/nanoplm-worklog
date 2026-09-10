@@ -1,7 +1,7 @@
 # Pre-registration
 
 The rules, fixed before any arm runs. The plan itself is in
-`ablation-ladder.md`.
+`02-ablation-ladder.md`.
 
 The point of writing these down first is that they cannot be adjusted after
 seeing the numbers. That is the specific failure of the jul30 series.
@@ -65,7 +65,7 @@ here saying what changed and why.
 
 Wall-clock matching leaves arms at different step counts, and downstream scores
 are read off whatever checkpoint an arm ended on, so node speed leaks straight
-into them (r = 0.89 among identical configurations; see `findings.md`).
+into them (r = 0.89 among identical configurations; see `04-findings.md`).
 
 Every arm from Tier 2 on writes an extra checkpoint at **step 10500**, the
 common step already used for the loss column. Downstream comparisons within a

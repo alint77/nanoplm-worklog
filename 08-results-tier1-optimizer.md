@@ -5,7 +5,7 @@ Base: h1024/L32 399.6M, 4.19M tokens/step (ga 4), 6 h stable on 4 nodes,
 
 ## Wave 1: learning rate (10 runs, COMPLETE)
 
-Two columns because node placement makes them differ. See findings.md: step
+Two columns because node placement makes them differ. See 04-findings.md: step
 time varied 1826-1998 ms across runs that differ ONLY in LR, so the wall-clock
 stop hands different token budgets to identical configurations. Same-compute
 arms must be read in the equal-step column.
@@ -51,7 +51,7 @@ The ordering of the AdamW grid was unaffected.
 ## Wave 2: weight decay, beta2, and the nanoplm deviations (10 runs, COMPLETE)
 
 At the Wave 1 optima. Controls are the Wave 1 winners, so nothing was re-run.
-Both columns given, because the rule from findings.md applies: same-compute arms
+Both columns given, because the rule from 04-findings.md applies: same-compute arms
 (weight decay, beta2) are judged at equal steps, compute-changing arms
 (cautious decay, which is ~5% slower) at the wall-clock stop.
 

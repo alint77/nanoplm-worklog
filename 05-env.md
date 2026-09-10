@@ -21,7 +21,7 @@ sonic-moe:             0.1.2.post1
 ```
 
 The SHA is **not final**. It moves once the remaining prerequisites land
-(see `ablation-ladder.md`). When it does, update `PINS.txt`,
+(see `02-ablation-ladder.md`). When it does, update `PINS.txt`,
 `pkgs/nanoplm/.FROZEN_SHA` and the frozen tree together.
 
 ## Layout
@@ -74,4 +74,4 @@ sep07_abl/eval/
 ```
 
 Runs on one login-node GH200; 31.5 min for PGYM + PBC contact in development
-mode. See `results-eval.md`.
+mode. See `11-results-eval-method.md`.

@@ -300,5 +300,5 @@ No code change needed: `mhc_lite_wrapping_level` already accepts
 ## TE fused RoPE: built, measured, reverted
 
 Why: it works and it is about 2x faster at the kernel level, but the step time
-is identical. See `findings.md`. Kept on branch `perf/te-fused-rope`, not
+is identical. See `04-findings.md`. Kept on branch `perf/te-fused-rope`, not
 merged.

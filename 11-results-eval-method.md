@@ -198,7 +198,7 @@ adjudicate small ones. Concretely:
 - Reporting downstream numbers for an arm is still worth doing; treating a
   0.002 downstream difference as a result is not.
 
-**Per-arm numbers for all 52 arms are in [results-eval-table.md](results-eval-table.md).**
+**Per-arm numbers for all 52 arms are in [12-results-eval-table.md](12-results-eval-table.md).**
 
 ## The contact metrics resolve much better than PGYM
 

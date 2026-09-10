@@ -17,26 +17,28 @@ Where we are: batch, optimizer and masking are settled. Architecture is next.
 
 ## Where to look
 
+Files are numbered in reading order.
+
 **Start here**
-- `decisions.md` - what we chose, and the number that decided it
-- `ablation-ladder.md` - the plan and what is left to run
+- `01-decisions.md` - what we chose, and the number that decided it
+- `02-ablation-ladder.md` - the plan and what is left to run
 
 **Before you trust a result**
-- `prereg.md` - the rules, fixed before arms run: noise floors, win thresholds,
+- `03-prereg.md` - the rules, fixed before arms run: noise floors, win thresholds,
   and which arms are matched by step vs by wall-clock
-- `findings.md` - things that cost us a run to learn. Read this before
+- `04-findings.md` - things that cost us a run to learn. Read this before
   debugging anything.
 
 **The numbers**
-- `results-tier0.md`, `results-tier0b.md` - shape and batch size
-- `results-tier1.md`, `results-tier1-wave1.md` - the optimizer
-- `results-tier1c.md` - the MLM objective
-- `results-eval.md` - downstream benchmarks: what they can and cannot decide
-- `results-eval-table.md` - every arm's downstream scores in one table
+- `06-results-tier0-noise-floor.md`, `07-results-tier0b-batch-size.md` - shape and batch size
+- `08-results-tier1-optimizer.md`, `09-results-tier1-wave1.md` - the optimizer
+- `10-results-tier1c-mlm.md` - the MLM objective
+- `11-results-eval-method.md` - downstream benchmarks: what they can and cannot decide
+- `12-results-eval-table.md` - every arm's downstream scores in one table
 
 **Infrastructure**
-- `env.md` - pinned versions, directory layout, launcher gotchas
-- `results-fa3-fork.md` - a FlashAttention fork worth +2.85%, and why we have
+- `05-env.md` - pinned versions, directory layout, launcher gotchas
+- `13-results-fa3-fork.md` - a FlashAttention fork worth +2.85%, and why we have
   not switched to it yet
 
 ## Two things that will save you time
@@ -46,4 +48,4 @@ to reorder them otherwise, and that is not a small effect.
 
 **Val loss is not the only measure, and not always the right one.** Long-range
 contact prediction disagrees with it in places, and eval loss can be biased by
-the masking scheme it is measured under. `results-eval.md` has the details.
+the masking scheme it is measured under. `11-results-eval-method.md` has the details.
