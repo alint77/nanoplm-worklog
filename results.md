@@ -5,9 +5,9 @@ the old tier prefixes, given per section so the docs and the filesystem agree.
 
 Contents: [batch size](#global-batch-size) ·
 [optimizer](#optimizer) · [MLM objective](#the-mlm-objective) ·
-[downstream](#downstream-across-52-arms) · [FA3 fork](#flashattention-3-fork-ab)
+[downstream](#downstream-across-67-arms) · [FA3 fork](#flashattention-3-fork-ab)
 
-Per-arm downstream scores for all 52 arms are in
+Per-arm downstream scores for all 67 arms are in
 [eval-table.md](eval-table.md).
 
 ---
@@ -236,14 +236,59 @@ entirely.
 pinned eval feeds 10% random tokens, and a model trained with pure masking has
 never seen a random substitution: it copies the corrupted token and eats a large
 loss on exactly those positions. That is the eval task penalising a distribution
-mismatch, not necessarily worse representations. Deferred to downstream, where
-PGYM masks a single position with the mask token and no random tokens, which if
-anything favours these arms. The gap is 14x what PGYM can resolve, so it answers
-cleanly.
+mismatch, not necessarily worse representations. Deferred to downstream, which
+has now answered: see below.
 
 **Base moves from 30% to 20% masking, 80/10/10 kept.** Worth 0.0076 against the
 old base, 4x threshold. Still owed before adoption: re-check the winner at LR
 5e-3 and 1e-2, since 7e-3 was tuned at 30% masking (Tier 1d, running).
+
+### Downstream reverses the loss on pure masking
+
+All 15 arms scored on the full benchmark. These runs are wall-clock matched over
+steps 10323-11051, and 700 steps is worth 0.0088 of long P@L, which is bigger
+than the effects here, so every score is corrected to step 10500 using the
+1.262e-05 per-step slope measured on the six base replicates. That correction
+also tightens the replicate band to 0.3875-0.3900. Threshold 0.0024.
+
+long P@L, corrected:
+
+| rate | 80/10/10 | 90/5/5 | 100/0/0 |
+|---|---|---|---|
+| 15% | **0.4149** | 0.4107 | 0.4142 |
+| 20% | 0.4074 | 0.4109 | **0.4201** |
+| 25% | 0.4015 | 0.4063 | 0.4002 |
+| 30% (old base) | 0.3849 | 0.3908 | 0.3848 |
+| 40% | 0.3423 | 0.3379 | 0.3232 |
+
+**100/0/0 is exonerated, completely.** Against 80/10/10 at the same rate it is
+-0.0007, +0.0127, -0.0013 and -0.0001 at 15/20/25/30%: inside noise three times
+and clearly ahead once. Its +0.15 eval loss was the masking artifact and nothing
+else. Pure masking only actually hurts at 40% (-0.0191, 8x threshold), which is
+the interaction the factorial was built to catch: at a high rate, corrupting a
+fifth of the input with no real tokens anywhere costs something.
+
+**The rate axis disagrees with the loss, mildly.** Loss put the optimum at
+20-25% with 15% clearly worse (+0.0065). Contacts put it at 15-20%: the top five
+cells are (20, 100/0/0) 0.4201, (15, 80/10/10) 0.4149, (15, 100/0/0) 0.4142,
+(20, 90/5/5) 0.4109, (15, 90/5/5) 0.4107, and 25% is already 0.4002-0.4063.
+30% sits at or below the base replicate band, and 40% collapses on both measures.
+So both metrics agree the answer is in 15-25% and disagree about where inside
+it, which is why 20% is the choice: it is top-group on contacts and top-group on
+loss.
+
+**PGYM sees the rate and not the split.** It ranks rates the same way
+(15-25% 0.3635-0.3744, 30% 0.3535-0.3566, 40% 0.3307-0.3360) and calls every
+split comparison a tie, including (20%, 100/0/0) vs (20%, 80/10/10) at -0.0037
+against a 0.0047 threshold. So the one cell that stands out on long P@L does not
+stand out on PGYM.
+
+**What this changes.** Nothing yet. (20%, 100/0/0) leading by 5x threshold on
+the deciding metric is a real candidate to replace the base, but it is one seed,
+its own rate-neighbours in the same column are 0.4142 and 0.4002, and the second
+downstream measure calls it a tie. Two more seeds each of (20%, 100/0/0) and
+(20%, 80/10/10) settle it, and at fixed 5000 steps that is 4 cheap runs. Until
+then the base keeps 80/10/10, the ModernBERT default.
 
 This tier is also the clearest case for the eval-masking fix. Before
 2026-09-08 the eval collator inherited `mlm_probability` from training and
@@ -253,11 +298,11 @@ artefact of task difficulty, pointing exactly where our prior already did.
 
 ---
 
-## Downstream across 52 arms
+## Downstream across 67 arms
 
-Full benchmark, all arms with loadable checkpoints (t0b, t0, t1a, t1b). All 52
-share a byte-identical `model_config.yaml`, which is what lets one compiled
-graph serve the sweep. Per-arm numbers: [eval-table.md](eval-table.md).
+Full benchmark, every arm with a loadable checkpoint (t0b, t0, t1a, t1b, t1c).
+They share a byte-identical `model_config.yaml`, which is what lets one compiled
+graph serve the whole sweep. Per-arm numbers: [eval-table.md](eval-table.md).
 
 Both benchmarks are zero-shot, no probe and no fine-tuning, reading the MLM head
 directly.

@@ -16,6 +16,18 @@ Submitted 2026-09-10 as jobs 1750791, 1750793, 1750794, 1750795. Masking changed
 the task, so 7e-3 (tuned at 30%) has to be re-confirmed at 20% before the base
 moves. First use of the fixed-step rule.
 
+## Next: confirm the masking split (4 runs)
+
+Downstream reversed the loss on 100/0/0, and (20%, 100/0/0) now leads the Tier
+1c factorial on long P@L by 5x threshold
+([results](results.md#downstream-reverses-the-loss-on-pure-masking)). It is one
+seed, its rate-neighbours do not follow it, and PGYM calls it a tie, so it is a
+candidate and not a decision. Two seeds each of (20%, 100/0/0) and
+(20%, 80/10/10), fixed-step at `max_steps: 5000`, settle it for about 40
+node-hours. Note that eval loss cannot referee this comparison at all: the
+pinned eval feeds 10% random tokens, so the 100/0/0 arms are scored on a task
+they never trained for. Judge it on long P@L, with PGYM reported beside it.
+
 ## Tier 2a: standard recipe knobs (24 runs, 8 arms x 3 LRs)
 
 | id | change | key | why |

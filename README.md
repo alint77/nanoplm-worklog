@@ -20,7 +20,7 @@ Batch, optimizer and masking are settled. Architecture is next.
 - [method.md](method.md) - the rules, fixed before the arms ran: noise floors,
   win thresholds, what counts as a win
 - [results.md](results.md) - everything measured, by topic
-- [eval-table.md](eval-table.md) - downstream scores for all 52 arms
+- [eval-table.md](eval-table.md) - downstream scores for all 67 arms
 - [plan.md](plan.md) - what is left to run
 - [findings.md](findings.md) - things that cost us a run to learn. Read this
   before debugging anything.

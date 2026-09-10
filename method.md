@@ -103,33 +103,60 @@ same treatment.
 
 ## How sharp each metric is
 
-2 sigma over the six base replicates, divided by the metric's slope against
-eval loss, gives the loss gap each metric needs before it can call a winner:
+The contact framework reports 48 metrics: 3 datasets x 4 separation bands
+(`local` [3,6), `short` [6,12), `medium` [12,24), `long` [24,-)) x 4 readouts
+(AUC, P@L, P@L2, P@L5). PGYM adds scc and ndcg. Within a band the four readouts
+are one ranking read four ways, so the informative axes are dataset and band.
 
-| metric | 2 sigma (replicates) | slope | loss gap needed |
+**The rule for picking the deciding metric.** For each metric, 2 sigma over the
+six base replicates divided by its slope against eval loss gives the loss gap it
+needs before it can call a winner. The deciding metric is the smallest such gap
+on `selected_protein`, the only dataset with enough proteins (n=1430 against
+n=96 and n=95 for the CASP sets) to resolve arms, with ties inside 10% broken
+toward the conventional P@L. Run on all 50 by `eval/tools/resolution.py`:
+
+| metric | 2 sigma | slope | loss gap needed |
 |---|---|---|---|
-| pgym scc | 0.0040 | -0.443 | 0.0091 |
+| selected_protein long AUC | 0.0052 | -2.258 | **0.0023** |
+| selected_protein long P@L2 | 0.0056 | -2.337 | **0.0024** |
+| **selected_protein long P@L** | 0.0048 | -1.958 | **0.0024** |
+| selected_protein long P@L5 | 0.0074 | -2.492 | 0.0030 |
+| selected_protein medium P@L | 0.0035 | -0.842 | 0.0041 |
+| casp14 long P@L | 0.0064 | -0.747 | 0.0085 |
+| pgym scc | 0.0040 | -0.438 | 0.0091 |
+| casp15 long P@L | 0.0100 | -1.014 | 0.0099 |
+| selected_protein local P@L | 0.0064 | -0.475 | 0.0134 |
 | casp14 local P@L | 0.0040 | -0.221 | 0.0179 |
-| casp15 local P@L | 0.0037 | -0.333 | 0.0113 |
-| selected_protein local P@L | 0.0064 | -0.477 | 0.0134 |
-| **selected_protein long P@L** | 0.0048 | **-1.972** | **0.0024** |
-| **selected_protein long AUC** | 0.0052 | **-2.277** | **0.0023** |
+| casp14 local P@L5 | 0.0165 | -0.501 | 0.0328 |
 
-Eval loss itself needs 0.0019, so **long-range contact prediction is nearly as
-sharp as val loss** and about 4x sharper than PGYM. Not because it is quieter,
-the noise is comparable, but because it responds 4.5x more steeply.
+The top three are a three-way tie, so the tie-break lands on **long P@L**. The
+four sharpest metrics of the 50 are all `selected_protein long`, and every
+`local` metric is the bluntest of its dataset, so the ordering is a property of
+the separation band rather than of the readout. Eval loss itself needs 0.0019,
+which makes long-range contacts nearly as sharp as val loss and about 4x sharper
+than PGYM. Not because they are quieter, the noise is comparable, but because
+they respond 4.5x more steeply.
 
-Those 2-sigma figures are the raw spread of replicates taken at their
-wall-clock stops, so they still carry the step-count leak. Correcting the six
-replicates to step 10500 halves the long P@L floor to **0.0022** (see
+Those 2-sigma figures are the raw spread of replicates taken at their wall-clock
+stops, so they still carry the step-count leak. Correcting the six replicates to
+step 10500 halves the long P@L floor to **0.0022** (see
 [findings.md](findings.md#wall-clock-matching-contaminates-downstream-scores-through-step-count)),
 which is what fixed-step arms will see. The raw number is used above because
-that is how the 52 already-run arms were scored.
+that is how the already-run arms were scored.
 
 PGYM's own replicate sigma is 0.0018 over three same-seed repeats (2 sigma
-0.0037), 0.0024 over three seeds (2 sigma 0.0047), 0.0020 pooled. It confirms large decisions and cannot adjudicate
-small ones: a 0.001 loss gap (Tier 1c's 20% vs 25%) is invisible to it, a 0.15
-gap (100/0/0) is 14x what it needs.
+0.0037), 0.0024 over three seeds (2 sigma 0.0047), 0.0020 pooled. It confirms
+large decisions and cannot adjudicate small ones: a 0.001 loss gap (20% vs 25%
+masking) is invisible to it.
+
+**One honest caveat about the selection.** A metric chosen for how steeply it
+tracks eval loss will, by construction, tend to agree with loss-based verdicts,
+so "two independent measures, same answers" reads stronger than it is. It does
+not threaten the large calls, which clear any reasonable metric by 4x to 17x.
+Where downstream actually earns its keep is where it *disagrees* with loss: the
+100/0/0 masking arms, and the `t0b-normuon-b1M-1721969` collapse. Keep PGYM
+reported alongside for that reason, since it is constructed differently
+(masked marginals on one position, no random tokens) and can dissent.
 
 ## Budget and what is frozen
 

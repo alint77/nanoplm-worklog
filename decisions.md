@@ -14,7 +14,7 @@ What we chose, and the number that decided it. Measurements live in
 | muon LR | 7e-3 | interior minimum, twice |
 | muon weight decay | 1e-5 (dion ships 0.01) | -0.0050 |
 | muon beta2 / cautious / nesterov | 0.95 / off / off | all ties, library defaults kept |
-| MLM | 20% masking, 80/10/10 split, token | -0.0076 over the old 30% |
+| MLM | 20% masking, 80/10/10 split, token | -0.0076 over the old 30% (split under review) |
 | eval masking | pinned 15%, 80/10/10, fixed seed | see below |
 | precision | bf16, one fp8 pair at the end | below |
 | corpus | UniRef50 only | below |
@@ -78,9 +78,15 @@ adding corpora and decided the extra variable was not worth it for an
 architecture study.
 
 **MLM at 20% masking, 80/10/10**, moved from 30% after the Tier 1c factorial
-([results](results.md#the-mlm-objective)). 80/10/10 over 90/5/5 is a coin
-flip on the evidence; keeping it stays with the ModernBERT default, which is one
-less deviation to defend.
+([results](results.md#the-mlm-objective)). 80/10/10 over 90/5/5 is a coin flip
+on the evidence; keeping it stays with the ModernBERT default, which is one less
+deviation to defend.
+
+**The split is not finished.** Downstream exonerated 100/0/0, whose +0.15 eval
+loss turned out to be entirely the eval-masking artifact, and (20%, 100/0/0)
+leads the whole factorial on long-range contacts by 5x threshold. One seed, and
+PGYM calls it a tie, so the base keeps 80/10/10 until four confirmation runs say
+otherwise ([plan.md](plan.md#next-confirm-the-masking-split-4-runs)).
 
 **Eval masking pinned and deterministic.** Eval used to inherit the whole
 training masking recipe and redraw its masks on every call. So an arm trained at
