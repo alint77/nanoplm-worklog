@@ -192,20 +192,20 @@ Checked under a real 1-rank FSDP2 with `MixedPrecisionPolicy`.
 ## Eval work the new metrics need
 
 The team's reported set is PGYM Spearman total, zero-shot contact, supervised
-contact, NewPISCES365, and subcell. Only the first two run today.
+contact, NewPISCES365, and subcell. Only NewPISCES365 has no path today.
 
 | metric | status |
 |---|---|
 | PGYM Spearman (total) | works |
 | contact, zero-shot | works |
-| contact, supervised | **blocked, not being pursued (2026-09-11).** `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)` and FA3 never materialises an attention matrix. Upstream hit the same wall and raises rather than solving it. Forking FA3 to write the scores out was considered and dropped; an eager-attention recompute in the eval wrapper remains the cheap route if it comes back. Consequence: the 100/0/0 masking question has no independent referee, since every metric we can run reads the model's own output sensitivity |
+| contact, supervised | **works, as of 2026-09-11.** The eager-attention recompute was the cheap route and it landed. `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)`, which no kernel can answer because both FA3 and SDPA fuse the softmax away, so the probabilities are recomputed inside `ModernBertAttention` on the padded SDPA path the eval embedder already uses. That location is what makes it cheap: q and k there already carry RoPE and QK norm, and the mask passed to the kernel already encodes the sliding window, so none of it is rebuilt from config. Verified against the kernel itself (`probs @ v` matches SDPA to 1e-5 on a global and a sliding layer, on GPU under autocast as well as CPU). 18 min per checkpoint in dev mode. Scores land beside zero-shot on all three sets, e.g. `selected_protein` long P@L2 0.529 supervised against 0.513 zero-shot on `t0-rep1` |
 | subcell (`scl`) | **available on the upstream-synced eval branch.** It is a `sequence_to_class` task in `PBC_SUPERVISED`, which upstream re-enabled in `d3c5e79` along with a custom embedder exposing per-residue and per-sequence embeddings. The pinned tree still has it in `REMOVED_FRAMEWORKS`; the synced branch does not. Not free at runtime though: the framework trains a task head per task per checkpoint, so it needs timing before it becomes a column |
 | NewPISCES365 | **does not exist in biotrainer at all.** Searched the pinned PR #192 tree, `biotrainer-core`, all seven branches across the three forks (sacdallago upstream, peymanvahidi, alint77), every commit message in full history, and the downloaded datasets: no match for "pisces" anywhere. The supervised contact sets are train/val plus casp14, casp15 and selected_protein. It needs a data source and a task protocol from whoever proposed it |
 
-Doing supervised contact first is worth more than its place in the priority list
-suggests: it is the one measurement that could settle the 100/0/0 masking
-question, because it reads a probe on frozen features instead of the model's own
-output sensitivity.
+Supervised contact was worth more than its place in the priority list suggested,
+which is why it went first: it is the one measurement that can settle the 100/0/0
+masking question, because it reads a probe on frozen features instead of the
+model's own output sensitivity. It is now available to do that.
 
 ## Tier 3: greedy ladder (~16 runs)
 
