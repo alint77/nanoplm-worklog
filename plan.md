@@ -139,14 +139,114 @@ Note throughout that eval loss cannot referee this comparison at all: the pinned
 eval feeds 10% random tokens, so the 100/0/0 arms are scored on a task they
 never trained for.
 
-## Tier 2a: the two remaining recipe knobs (6 runs)
+## Tier 2a: rope theta (6 runs), then all-global
 
-Off the modernized base, 3 LRs each, wall-clock matched.
+Reordered 2026-09-11: rope theta goes first and gets six arms instead of one.
+The original A7 was a single arm at `global_rope_theta: 10000`, which turned out
+to be half a knob. The all-global arm (A6) keeps its config, generated and
+unsubmitted, and runs after.
 
-| id | change | key | why |
+### Why six, and why both thetas
+
+RoPE attention depends only on the relative offset `i - j`, so what matters is
+how many of the 32 frequency pairs complete a cycle inside the largest offset a
+layer can actually use: 512 for a global layer (max sequence length), **64 for a
+sliding layer** (the window is +-64). Count those, and the shipped base is
+badly over-provisioned at both scales, worse on the local layers, which are 21
+of the 32:
+
+| theta | longest wavelength | live dims, global (offset 512) | live dims, local (offset 64) |
 |---|---|---|---|
-| A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
-| A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
+| 160000 | 691,000 | 12/32 | |
+| 10000 | 47,000 | 16/32 | 9/32 |
+| 500 | 2,600 | 23/32 | |
+| 60 | 335 | | 19/32 |
+
+The remaining pairs rotate so little across the usable range that they are
+effectively position-independent. So the hypothesis is two-sided, and that is
+the reason to run a ladder rather than one point: **lowering theta trades
+content-only capacity for positional capacity.** Those near-constant dims are
+implicit NoPE dims, and NoPE dims are not obviously waste (`rope_dim_fraction`
+exists to create them on purpose), so the curve could go either way and could
+turn anywhere along it.
+
+One rule sets both thetas: longest wavelength = `M` x the largest usable offset
+for that layer type, i.e. `theta = (M * offset / 2pi) ** (64/62)`.
+
+### What the field uses
+
+Both checked in source, neither tunes theta to protein length and neither has a
+local/global split:
+
+- **ESMC**: `EsmcRotaryEmbedding(d_model // n_heads)`, no base override, so
+  **10000** ([Biohub/esm](https://github.com/Biohub/esm),
+  `esm/models/esmc/layers.py:437`).
+- **AtlasLM**, the language model inside AtlasFold: `RotaryEmbedding(d_model //
+  n_heads)`, also **10000**, `max_seqlen=20000`, and the file notes it started
+  from ESM-3's implementation
+  ([SeonghwanSeo/atlasfold](https://github.com/SeonghwanSeo/atlasfold),
+  `src/atlaslm/layers/transformer_stack.py:103`).
+
+So 10000 is inherited from text models, twice over, and everything below it is
+untested. Arm A is that value on our FSS pattern; it is **not** a replication of
+either model, both of which are all-global.
+
+### The six arms
+
+All hold the FSS pattern (11 global, 21 local) and LR 2e-2.
+
+| arm | global | local | live g | live l | what it is |
+|---|---|---|---|---|---|
+| (control) | 160000 | 10000 | 12/32 | 9/32 | `t2p-mod-lr2e-2`, already run |
+| A | 10000 | 10000 | 16/32 | 9/32 | the field's value; vs control = global-only |
+| B | 10000 | 1200 | 16/32 | 11/32 | M=92; vs A = local-only |
+| C | 2000 | 250 | 19/32 | 14/32 | M=18 |
+| D | 500 | 60 | 23/32 | 19/32 | M=5 |
+| E | 100 | 12 | 31/32 | 30/32 | M=1, the floor: every pair completes a cycle |
+| F | 500 | 10000 | 23/32 | 9/32 | global-only at M=5; with D and control, a 2x2 |
+
+The decomposition falls out of the ladder rather than costing arms: control->A
+moves global alone, A->B moves local alone. F adds the same split at the
+aggressive end. A local-only arm at M=5 (160000/60) completes the 2x2 and is
+held back as one follow-up run if M=5 wins.
+
+Not bracketed: every arm is at or below the base. If the base wins the ladder,
+that is evidence for the content-only reading, and closing it needs one arm
+*above* base (theta ~1e6). Held as a follow-up rather than spent now.
+
+### Protocol
+
+**No new control, and no LR sweep.** The arms inherit 2e-2 because RoPE is a
+rotation: it preserves `||q||` and `||k||`, and QK norm is applied after it, so
+the attention logit scale that sets the LR ceiling is untouched. This is a
+stronger claim than compute-neutrality and is why these arms do not get the
+3-LR treatment the all-global arm will.
+
+Theta is compute-neutral, so per the matching rule the screen is **fixed-step,
+not wall-clock**: six arms at `max_steps: 5000`, compared against
+`t2p-mod-lr2e-2` at step 5000 (eval loss 2.2356), which is byte-for-byte this
+config at base theta with the same seed and data order. Arms that clear the
+noise floor then resume to step 10500 and are read against `t2-mod-long` at
+equal step. That run only has to *reach* 10500, not finish, so none of this
+waits on it.
+
+One asymmetry to state: `t2-mod-long` carries the 96-step data overlap from the
+unpatched pinned tree and these arms do not, because the fix is now in. Below
+resolution, logged in
+[findings.md](findings.md#terminal-checkpoints-did-not-record-the-data-position).
+
+### Deciding metric
+
+Long P@L on `selected_protein`, per the [standing rule](method.md#decision-rule),
+with loss diagnostic. Theta is a positional knob, so loss may barely move while
+long-range contact does; supervised contact is a second read now that it runs.
+
+Pre-registered caveat: training sequences are <=512 but the contact sets are
+not, so low-theta arms could lose on extrapolation rather than representation.
+Measured on the dev-mode subsets that actually get scored: `selected_protein`
+2/71 over 512 (max 592, 1.16x), `casp14` 0/38, `casp15` 4/38 (max 573). The
+deciding metric is therefore clean and the >512 stratum is a footnote; casp15
+gets reported both ways.
 
 Struck from the original eight: rmsnorm, swiglu and QK norm are now in the base
 (see [decisions.md](decisions.md#the-modernized-baseline-rmsnorm-swiglu-qk-norm)),
