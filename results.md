@@ -262,12 +262,32 @@ long P@L, corrected:
 | 30% (old base) | 0.3849 | 0.3908 | 0.3848 |
 | 40% | 0.3423 | 0.3379 | 0.3232 |
 
-**100/0/0 is exonerated, completely.** Against 80/10/10 at the same rate it is
--0.0007, +0.0127, -0.0013 and -0.0001 at 15/20/25/30%: inside noise three times
-and clearly ahead once. Its +0.15 eval loss was the masking artifact and nothing
-else. Pure masking only actually hurts at 40% (-0.0191, 8x threshold), which is
-the interaction the factorial was built to catch: at a high rate, corrupting a
-fifth of the input with no real tokens anywhere costs something.
+**100/0/0 is exonerated, and on three of the four bands it wins outright.** Its
++0.15 eval loss was the masking artifact and nothing else. Taking 100/0/0 minus
+80/10/10 at each rate, step-corrected per band:
+
+| rate | local | short | medium | long |
+|---|---|---|---|---|
+| 15% | +0.0251 | +0.0147 | +0.0108 | -0.0006 |
+| 20% | +0.0187 | +0.0125 | +0.0121 | +0.0126 |
+| 25% | +0.0171 | +0.0075 | +0.0088 | -0.0013 |
+| 30% | +0.0115 | +0.0082 | +0.0113 | -0.0001 |
+| 40% | +0.0078 | +0.0036 | +0.0004 | -0.0191 |
+
+Sixteen of twenty positive, and on local, short and medium it is positive at
+every single rate. Per-band replicate bands make it starker: on local P@L every
+100/0/0 arm at 15-30% lands **above** the base band (0.5527-0.5607) while every
+80/10/10 arm lands inside or below it. The long band is the patchy one, positive
+only at 20%.
+
+The effect is also not dose-dependent: 90/5/5 tracks 80/10/10 rather than
+sitting between it and 100/0/0, so this reads as a threshold effect of having
+*any* non-mask corruption, not of how much.
+
+Pure masking only hurts at 40%, and only on long contacts (-0.0191, 8x
+threshold). That is the interaction the factorial was built to catch: at a high
+rate, corrupting a fifth of the input with no real tokens anywhere costs
+something.
 
 **The rate axis disagrees with the loss, mildly.** Loss put the optimum at
 20-25% with 15% clearly worse (+0.0065). Contacts put it at 15-20%: the top five
@@ -278,18 +298,41 @@ So both metrics agree the answer is in 15-25% and disagree about where inside
 it, which is why 20% is the choice: it is top-group on contacts and top-group on
 loss.
 
-**PGYM sees the rate and not the split.** It ranks rates the same way
-(15-25% 0.3635-0.3744, 30% 0.3535-0.3566, 40% 0.3307-0.3360) and calls every
-split comparison a tie, including (20%, 100/0/0) vs (20%, 80/10/10) at -0.0037
-against a 0.0047 threshold. So the one cell that stands out on long P@L does not
-stand out on PGYM.
+**PGYM sees the rate and not the split, but it is too blunt to count as
+disagreement.** It ranks rates the same way (15-25% 0.3635-0.3744, 30%
+0.3535-0.3566, 40% 0.3307-0.3360) and calls every split comparison a tie. Push
+the long P@L gain through the two slopes to see why that is uninformative:
+0.0127 / 1.958 = 0.0065 in loss-equivalent, times 0.438 = 0.0028 in scc, against
+a PGYM threshold of 0.0040. **PGYM could not have detected this effect even if
+it is entirely real.** Inconclusive, not dissenting.
 
-**What this changes.** Nothing yet. (20%, 100/0/0) leading by 5x threshold on
-the deciding metric is a real candidate to replace the base, but it is one seed,
-its own rate-neighbours in the same column are 0.4142 and 0.4002, and the second
-downstream measure calls it a tie. Two more seeds each of (20%, 100/0/0) and
-(20%, 80/10/10) settle it, and at fixed 5000 steps that is 4 cheap runs. Until
-then the base keeps 80/10/10, the ModernBERT default.
+**What this changes, and the one thing that holds it up.** By the pre-registered
+rule this is an adopt: (20%, 100/0/0) clears the deciding metric by 5.8x, and
+the band profile makes it a consistent effect rather than one lucky cell. The
+base still keeps 80/10/10 for now, on a single specific worry.
+
+The 10% random-token share explicitly trains the model to be *robust* to
+substitutions, and the categorical Jacobian *is* a substitution-sensitivity
+measurement: it perturbs a residue and reads how far the logits move. So a
+scheme that removes substitution training could score higher on this benchmark
+by making the model twitchier rather than by giving it better structure. The
+band pattern fits that reading uncomfortably well, since the gain is largest
+near the diagonal (+0.025 local) and fades with separation (-0.001 long at most
+rates). It is not a clean fit either: P@L is rank-based within a band, so a
+uniform sensitivity change should cancel, and the artifact story needs the
+inflation to be separation-dependent.
+
+Every zero-shot number we have goes through the model's own output sensitivity,
+so none of them can settle this. What would: a probe trained on frozen features,
+which reads the representation rather than the sensitivity. Biotrainer ships one
+(`autoeval_supervised_contact.py`, a logistic regression in the AMPLIFY style),
+but it reads `embedder.compute_attention_map(sequence)` and nanoPLM runs FA3,
+which never materialises an attention matrix, so it needs an eager-attention
+path in the eval wrapper first. `pbc_supervised` and `flip` are both in
+nanoPLM's `REMOVED_FRAMEWORKS` today.
+
+So the decision is deferred rather than made, and [plan.md](plan.md#next-settle-the-masking-split)
+carries both halves: the confirmation seeds, and the independent measurement.
 
 This tier is also the clearest case for the eval-masking fix. Before
 2026-09-08 the eval collator inherited `mlm_probability` from training and

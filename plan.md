@@ -15,17 +15,42 @@ Tier 1d finished 2026-09-11 and settled the base at 20% masking, LR 7e-3
 ([results](results.md#the-lr-re-check-at-20-masking)). Next up are the four
 masking-split confirmation runs below, then Tier 2a off the new base.
 
-## Next: confirm the masking split (4 runs)
+## Next: settle the masking split
 
-Downstream reversed the loss on 100/0/0, and (20%, 100/0/0) now leads the Tier
-1c factorial on long P@L by 5x threshold
-([results](results.md#downstream-reverses-the-loss-on-pure-masking)). It is one
-seed, its rate-neighbours do not follow it, and PGYM calls it a tie, so it is a
-candidate and not a decision. Two seeds each of (20%, 100/0/0) and
-(20%, 80/10/10), fixed-step at `max_steps: 5000`, settle it for about 40
-node-hours. Note that eval loss cannot referee this comparison at all: the
-pinned eval feeds 10% random tokens, so the 100/0/0 arms are scored on a task
-they never trained for. Judge it on long P@L, with PGYM reported beside it.
+Downstream reversed the loss on 100/0/0, and it now beats 80/10/10 on 16 of 20
+band comparisons, every rate on local, short and medium
+([results](results.md#downstream-reverses-the-loss-on-pure-masking)). By the
+pre-registered rule that is an adopt at 5.8x threshold. Two things to do before
+flipping the base, in this order.
+
+**1. An independent measurement, because every metric we have shares one
+confound.** The 10% random tokens train substitution robustness and the
+categorical Jacobian measures substitution sensitivity, so the zero-shot contact
+numbers could be rewarding twitchiness rather than structure. PGYM cannot
+referee it: the effect works out to 0.0028 scc against its 0.0040 threshold, so
+it is underpowered by construction, not dissenting.
+
+What reads the representation instead of the sensitivity is a probe on frozen
+features. Biotrainer ships `autoeval_supervised_contact.py` (logistic regression,
+AMPLIFY style), but it calls `embedder.compute_attention_map(sequence)` and
+nanoPLM runs FA3, which never materialises an attention matrix. So this needs an
+eager-attention recompute wired into the eval wrapper, plus re-enabling the
+framework: `pbc_supervised` and `flip` are both in `REMOVED_FRAMEWORKS`. Code
+first, then four checkpoints, no training. Alternative if that proves awkward:
+re-wire the supervised embedding tasks instead, which probe per-residue
+embeddings rather than attention.
+
+**2. Confirmation seeds, at 10500 steps and not 5000.** Two seeds each of
+(20%, 100/0/0) and (20%, 80/10/10). The replicate band (0.3875-0.3900) and the
+0.0022 threshold were both measured at step 10500, and long P@L moves 1.26e-5
+per step, so a 5000-step checkpoint cannot be compared against either. That is
+the same horizon-mismatch trap flagged for the Tier 1d loss threshold, and it
+bites harder here. About 380 GPU-hours, which is cheap against a decision that
+sets the base for every Tier 2 arm.
+
+Note throughout that eval loss cannot referee this comparison at all: the pinned
+eval feeds 10% random tokens, so the 100/0/0 arms are scored on a task they
+never trained for.
 
 ## Tier 2a: standard recipe knobs (24 runs, 8 arms x 3 LRs)
 
@@ -171,7 +196,7 @@ revisiting now that it is no longer locked to the stable runs.
 
 | tier | runs | note |
 |---|---|---|
-| 1c seeds | 4 | confirm the masking split, fixed-step |
+| 1c seeds | 4 | settle the masking split, fixed-step at 10500 |
 | 2a | 24 | 8 arms x 3 LRs |
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set |
 | 2c | 27 | 9 arms x 3 LRs |

@@ -82,11 +82,16 @@ architecture study.
 on the evidence; keeping it stays with the ModernBERT default, which is one less
 deviation to defend.
 
-**The split is not finished.** Downstream exonerated 100/0/0, whose +0.15 eval
-loss turned out to be entirely the eval-masking artifact, and (20%, 100/0/0)
-leads the whole factorial on long-range contacts by 5x threshold. One seed, and
-PGYM calls it a tie, so the base keeps 80/10/10 until four confirmation runs say
-otherwise ([plan.md](plan.md#next-confirm-the-masking-split-4-runs)).
+**The split is not finished, and 100/0/0 is currently ahead.** Downstream
+exonerated it (the +0.15 eval loss was entirely the eval-masking artifact), and
+it beats 80/10/10 on 16 of 20 band comparisons, including every rate on local,
+short and medium contacts. By the pre-registered rule that is an adopt. It is
+held up on one worry: the 10% random tokens train substitution robustness, and
+the categorical Jacobian measures substitution sensitivity, so the benchmark may
+be rewarding a twitchier model rather than a better one. Every zero-shot metric
+we have shares that confound, so settling it needs a probe on frozen features.
+Both halves are in [plan.md](plan.md#next-settle-the-masking-split);
+the base keeps 80/10/10 until then.
 
 **Eval masking pinned and deterministic.** Eval used to inherit the whole
 training masking recipe and redraw its masks on every call. So an arm trained at

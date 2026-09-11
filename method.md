@@ -177,6 +177,33 @@ vocab 32.
 **Seeds.** Tier 2: 1 seed per arm per LR, except our own ideas (2c), which get
 2. Tier 3 and 4: 2 seeds.
 
+## Overrides, logged
+
+**2026-09-11: the masking split cleared the rule and was not adopted.**
+
+What cleared: (20%, 100/0/0) beats (20%, 80/10/10) by 0.0127 on the deciding
+metric, 5.8x the 0.0022 threshold, and by a consistent margin on 16 of 20
+per-band comparisons. The pre-registered rule says adopt.
+
+Why it was deferred: the 10% random tokens in 80/10/10 train the model to be
+robust to substitutions, and the categorical Jacobian measures substitution
+sensitivity, so the benchmark may reward the arm that is twitchier rather than
+the one with better structure. Every zero-shot metric in this series reads the
+model's own output sensitivity, so none of them can separate the two readings.
+That is a named mechanism, not a general doubt, and PGYM cannot arbitrate: the
+effect is 0.0028 scc against its 0.0040 threshold.
+
+What resolves it: a probe trained on frozen features, plus two confirmation
+seeds per arm at step 10500. Both are in
+[plan.md](plan.md#next-settle-the-masking-split). If the probe agrees, the base
+moves to 100/0/0 and this entry records a delay rather than an override. If the
+gap vanishes, the zero-shot contact metric cannot referee masking-split arms at
+all, and that belongs in this file.
+
+Deferring a result that cleared the rule is a deviation either way, which is why
+it is written down here with a date rather than settled quietly in a results
+file.
+
 ## How the matching rule evolved
 
 Superseded, kept for the record. The first amendment (2026-09-10) had every arm
