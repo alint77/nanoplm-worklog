@@ -222,18 +222,27 @@ the attention logit scale that sets the LR ceiling is untouched. This is a
 stronger claim than compute-neutrality and is why these arms do not get the
 3-LR treatment the all-global arm will.
 
-Theta is compute-neutral, so per the matching rule the screen is **fixed-step,
-not wall-clock**: six arms at `max_steps: 5000`, compared against
-`t2p-mod-lr2e-2` at step 5000 (eval loss 2.2356), which is byte-for-byte this
-config at base theta with the same seed and data order. Arms that clear the
-noise floor then resume to step 10500 and are read against `t2-mod-long` at
-equal step. That run only has to *reach* 10500, not finish, so none of this
-waits on it.
+Theta is compute-neutral, so per the matching rule these are **fixed-step, not
+wall-clock**: six arms at `max_steps: 10500`, from scratch, one segment each.
 
-Each of those resumes gets a **fresh `pretraining.ckp_dir`**, because the run
-directory is derived from the checkpoint's name rather than its location and a
-resume otherwise writes over the arm it resumed from
-([findings.md](findings.md#a-resumed-run-writes-into-the-source-runs-directory-unless-you-move-ckp_dir)).
+10500 and not a cheaper 5000-step screen, which is what was first submitted and
+then cancelled 8 minutes in. Every downstream calibration in this series sits at
+that horizon: the six noise-floor replicates ran 10839 to 11036, the masking
+control `t1c-mlm15-m80` is read at 10500, and **no run has ever been scored
+downstream at 5000 steps**, so there is no sigma there for the metric that
+decides this. A 5000-step screen could therefore only be read on eval loss,
+which is exactly the measure this ablation expects to barely move. And it would
+not have saved anything: six screens plus six resumes to 10500 costs what six
+direct runs cost, so the screen only pays if it lets arms be dropped, on the one
+signal least likely to separate them.
+
+`max_wallclock_hours` is raised to 7.0 for these arms so that `max_steps` binds
+rather than the clock: at the measured 1.98 s/step, 10500 steps is 5.78 h and
+the standing 6 h limit leaves only ~14 min of margin, which one slow node would
+eat. A fixed-step comparison wants the step count to be the thing that stops it.
+
+They are read against `t2-mod-long` at equal step 10500. That run only has to
+*reach* 10500, not finish, so none of this waits on it.
 
 One asymmetry to state: `t2-mod-long` carries the 96-step data overlap from the
 unpatched pinned tree and these arms do not, because the fix is now in. Below
