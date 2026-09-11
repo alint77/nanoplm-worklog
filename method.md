@@ -28,9 +28,32 @@ the training masking are still scored on the same task.
   slower architecture gets fewer steps in six hours and pays for the slowdown
   itself. That is what makes the comparison honest.
 - An arm that **does not** (learning rate, weight decay, betas,
-  cautious/nesterov, masking rate, masking split, seed, decay shape) is
-  **fixed-step**: `max_steps: N`, with `max_wallclock_hours` left as a safety
+  cautious/nesterov, masking rate, masking split, seed, decay shape, rope theta)
+  is **fixed-step**: `max_steps: N`, with `max_wallclock_hours` left as a safety
   net only.
+
+**What that safety net is for, and how to set it.** On a fixed-step arm the
+wall-clock stop does no matching work, so it is tempting to push it out of the
+way. Do not: `slurm/sbatch_run.sh` has no `--signal` and the pipeline installs
+no SIGTERM handler, so a job that reaches Slurm's `--time` is killed with **no
+terminal checkpoint** and the whole run is lost rather than shortened. The stop
+is what turns that into a short but usable arm, compared at the lowest step any
+arm reached, which is already how the noise-floor replicates are read.
+
+Set it *below* the Slurm limit, allowing for compile and the terminal save:
+**6.5 against a 7 h allocation**. It counts steady-state training only (the
+clock starts two steps after the run begins, excluding compile), so a value
+equal to the Slurm limit can never fire. The Tier 2a rope arms were submitted at
+7.0 against `--time=07:00:00` for exactly that reason, which silently disabled
+the net; at the observed 1.97-2.05 s/step they project 5.9-6.1 h and were left
+alone, but the margin was luck rather than design. Break-even for a 10500-step
+arm on a 7 h allocation is 2.35 s/step, about 19% slower than nominal.
+
+The node-health gate is worth keeping on fixed-step arms, but for a smaller
+reason than on wall-clock ones: a slow node group no longer corrupts the
+comparison (same steps, same data, same math, just later), it only risks the
+Slurm limit above and wastes cluster time. The r=0.89 node-speed leakage that
+justifies the gate is a wall-clock-matching artifact and does not apply here.
 - Inside an architecture tier the two combine: the per-variant LR sweep is
   fixed-step, the comparison between variants is wall-clock. Tuning is a
   compute-neutral question asked within one architecture; the comparison is not.
