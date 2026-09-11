@@ -502,6 +502,32 @@ these died about 40 s in. And a `bash -x` launcher echoes its own comments into
 stderr, so grepping stderr for an error string can match the comment that
 documents it. Both cost a wrong conclusion tonight.
 
+### A "retrying" log line that never retried
+
+`tools/submit_gated.sh` waits for a job's profiler trace, and on the way it
+watches for the job dying. When it saw a dead job it logged "died early ...,
+retrying" and broke out of the wait loop with no trace in hand. The next branch
+is `if [ -z "$t" ]`, "no trace -> keeping it, cannot gate", which returns. So the
+retry never happened, and the log said it did.
+
+Cost: two arms of the t2p LR sweep on 2026-09-11. Slurm killed both
+(`CANCELLED by 0`, uid 0, node failure on jpbo-013) about 100 s in, and nobody
+noticed until the other three finished two hours later and the results table had
+three rows instead of five. They were the two most important learning rates.
+
+Fixed by separating the two cases: a job that died gets `try=$((try+1));
+continue`, a job that is merely slow to write a trace gets the old
+keep-it-ungated behaviour. The fix also has to tell apart **who** cancelled it.
+`sacct` reports `CANCELLED by <uid>`, and uid 0 is Slurm itself (node failure,
+preemption), which deserves a resubmit. Any other uid is a person, and
+resubmitting a job someone just cancelled is the last thing they want: that same
+afternoon a deliberate cancel of five jobs would have fought a script trying to
+put them back.
+
+Two general lessons. A log line that claims an action must be written next to
+the code that takes it, or it becomes a lie during a refactor. And when a batch
+of N jobs comes back with fewer than N results, count them before reading them.
+
 ### Held jobs do not start themselves after maintenance
 The Tier 1 jobs were submitted just before a cluster-wide maintenance window
 and ended up `PENDING` with `Reason=JobHeldUser` and `Priority=0`, which is a

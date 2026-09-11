@@ -13,9 +13,27 @@ the robustness check: an arm that only wins at one LR did not win.
 
 Two things, in this order, before any Tier 2 arm runs.
 
-**1. LR re-sweep on the new base (5 runs, fixed-step). RUNNING since
-2026-09-11** as jobs 1759347-1759351, arms
-`t2p-mod-lr{3.5e-3,5e-3,7e-3,1e-2,1.41e-2}`, `max_steps: 3500`, 3 h limit. The base changed twice at once: rmsnorm + swiglu +
+**1. LR re-sweep on the new base, fixed-step at `max_steps: 3500`.** First wave
+(jobs 1759347-1759351) returned only three arms: Slurm killed 7e-3 and 1e-2 on a
+node failure and the launcher's retry was broken (see
+[findings.md](findings.md#a-retrying-log-line-that-never-retried)). What came
+back:
+
+| LR | loss @3500 |
+|---|---|
+| 3.5e-3 | 2.2923 |
+| 5e-3 | 2.2819 |
+| **1.41e-2** | **2.2674** |
+
+Monotone down to the top of the grid, so **QK norm moved the LR optimum up** and
+the winner sits at an edge. Per the standing rule, the grid gets extended before
+anything is built on it. Second wave RUNNING as jobs 1761217, 1761218, 1761220,
+1761221: the two lost points (7e-3, 1e-2) plus 2e-2 and 2.8e-2 above. If 2.8e-2
+wins, extend again.
+
+This is a real change from the stock base, where 7e-3 was the interior optimum
+three times over and 1e-2 was already +0.0050 worse. Expected direction: QK norm
+bounds attention logits, which is what usually limits the learning rate. The base changed twice at once: rmsnorm + swiglu +
 QK norm, and masking 20% to 15%. The architecture change moves compute per step,
 so the matching rule requires a fresh compute-neutral sweep before anything is
 compared against it.
