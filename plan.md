@@ -13,11 +13,28 @@ the robustness check: an arm that only wins at one LR did not win.
 
 Two things, in this order, before any Tier 2 arm runs.
 
-**1. LR re-sweep on the new base (4 runs, fixed-step).** The base changed twice
-at once: rmsnorm + swiglu + QK norm, and masking 20% to 15%. The architecture
-change moves compute per step, so the matching rule requires a fresh
-compute-neutral sweep before anything is compared against it. `max_steps: 5000`,
-LRs bracketing 7e-3, same shape as Tier 1d.
+**1. LR re-sweep on the new base (5 runs, fixed-step). SUBMITTED 2026-09-11**
+as jobs 1759190-1759194, arms `t2p-mod-lr{3.5e-3,5e-3,7e-3,1e-2,1.41e-2}`,
+`max_steps: 5000`, 4 h limit. The base changed twice at once: rmsnorm + swiglu +
+QK norm, and masking 20% to 15%. The architecture change moves compute per step,
+so the matching rule requires a fresh compute-neutral sweep before anything is
+compared against it.
+
+Five points rather than Tier 1d's four, extending to 1.41e-2: QK norm stabilises
+attention logits and can move the optimum up, and the Tier 1d curve already had
+more room above 7e-3 (+0.0050 at 1e-2) than below (+0.0094 at 3.5e-3). The grid
+brackets the optimum whichever way it moves.
+
+Verified before submitting, on the config the runs actually use: rmsnorm reaches
+the layers (`attn_norm` is `RMSNorm`), swiglu is parameter-neutral against geglu
+(`mlp.Wi` stays 5376x1024), QK norm is consumed in the attention forward, and
+the whole model is still **399.6M parameters**, so the modernization is
+param-neutral and the comparison against stock is clean on that axis.
+
+QK norm here is parameter-free `F.rms_norm(q, (head_dim,))` per head, applied
+**after** RoPE (`reorder_RoPE_QKNorm: false`). Arm A5 would have tested the
+order and is struck, so that ordering is now an untested choice in the base
+rather than a measured one.
 
 **2. The modernization long run (1 run, wall-clock matched).** The modernized
 base at its winning LR against stock ModernBERT at the same 15% / 80-10-10.
@@ -136,9 +153,8 @@ run at its best LR.
 | C7 | Loopie | `use_loopie` |
 | C8 | Huginn recycling | `use_huginn_looping` |
 
-Struck: RePO. **Count to confirm:** combining x0 and resid lambdas leaves 8
-arms, so 24 short runs and 8 long ones. The team said 27 and 9, which is 9 arms,
-so either a ninth arm is coming or the count predates the merge.
+Struck: RePO. Confirmed 2026-09-11: 8 arms, so 24 short runs and 8 long ones.
+The meeting's 27 and 9 predated merging x0 into the resid-lambda arm.
 
 C1+C2 are unblocked: the lambdas are fp32 parameters cast to bf16 for the
 forward with fp32 masters in the optimizer, the ordinary mixed-precision path,
@@ -157,7 +173,7 @@ contact, NewPISCES365, and subcell. Only the first two run today.
 | contact, zero-shot | works |
 | contact, supervised | **needs code.** `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)`, and nanoPLM runs FA3, which never materialises an attention matrix. Needs an eager-attention recompute in the eval wrapper, plus lifting `pbc_supervised` out of `REMOVED_FRAMEWORKS` |
 | subcell (`scl`) | **needs code.** It is a `sequence_to_class` task in `PBC_SUPERVISED`, so it needs per-sequence embeddings out of the wrapper, and that framework is also in `REMOVED_FRAMEWORKS` |
-| NewPISCES365 | **not in our biotrainer.** Nothing by that name in PR #192: the supervised contact sets are train/val plus casp14, casp15 and selected_protein. Needs a source before it can be planned |
+| NewPISCES365 | **does not exist in biotrainer at all.** Searched the pinned PR #192 tree, `biotrainer-core`, all seven branches across the three forks (sacdallago upstream, peymanvahidi, alint77), every commit message in full history, and the downloaded datasets: no match for "pisces" anywhere. The supervised contact sets are train/val plus casp14, casp15 and selected_protein. It needs a data source and a task protocol from whoever proposed it |
 
 Doing supervised contact first is worth more than its place in the priority list
 suggests: it is the one measurement that could settle the 100/0/0 masking
