@@ -240,6 +240,19 @@ measure each other, and nothing is checked at a second scale, which the batch
 decision explicitly flagged as owed ("chosen at 400M, the 600M transfer has a
 different critical batch").
 
+**2026-09-11: the modernization LR grid was not extended, against the standing
+rule.** The rule says a winner at the edge of the grid means extend before
+building on it, and that is what happened to the first 5-point grid. The 7-point
+relaunch also put its best point at the edge, 2.8e-2, so the rule asks for 4e-2.
+It was not run. The reason the rule exists is a winner that might really sit
+outside the grid; here the top two points differ by 0.0008 against a resolution
+of 0.0019, and the last three gaps are 0.0022, 0.0017, 0.0008, so the curve is
+flat at the top rather than still climbing. 2e-2 was taken, the lower of two
+indistinguishable points. Cost if this is wrong: the modernization long run,
+which is the headline comparison against stock ModernBERT, gets an LR up to one
+grid step below optimal, which would understate the modernization. Reopening it
+costs one 2h45 sweep arm at 4e-2 plus a rerun of the long run.
+
 **2026-09-11: the masking split cleared the rule and was not adopted.**
 
 What cleared: (20%, 100/0/0) beats (20%, 80/10/10) by 0.0127 on the deciding

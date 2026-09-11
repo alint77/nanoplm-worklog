@@ -605,3 +605,35 @@ jpbl-s02-04.
 
 The duplicates did have one accidental benefit: three same-config pairs gave
 sigma_repeat ~0.0004 for free, which Tier 0 would otherwise have spent runs on.
+
+## Terminal checkpoints did not record the data position
+
+A checkpoint written by the periodic save carries `epoch_data_step`,
+`epoch_sub_batch_step` and `batch_split_divisor`, and `resume.mode: continue`
+uses them to fast-forward the loader to where the stream stood. The save that
+runs after the training loop exits, which is the one every fixed-step arm ends
+on, did not: those three fields were computed inside the loop and were not in
+scope afterwards. A resume from a terminal checkpoint therefore started the
+current pass from the top and silently re-trained on data the run had already
+seen.
+
+It surfaced because Tier 2c resumes every long run from its sweep winner's
+terminal checkpoint, which is the exact case the bug covers. Fixed in
+[PR #154](https://github.com/peymanvahidi/nanoplm/pull/154) by tracking the
+position at each step boundary so the post-loop save can record it too, with a
+guard for the zero-step case where no step ever completed.
+
+Proven on three smoke runs rather than by reading: a periodic checkpoint carried
+`epoch_data_step: 640`, a resume from it logged `fast-forward to epoch=0
+data_step=640`, resumed loss at step 60 was 2.8024 against 2.8032 for the
+continuous run (a 0.0008 gap where run-to-run nondeterminism alone is 0.0017),
+and the patched terminal save carried `epoch_data_step: 960` = 60 x 16,
+consistent with the 640 = 40 x 16 above.
+
+The pinned tree was built before this and was patched in place on 2026-09-11
+(`env/PINS.txt` records it, pre-patch file kept beside it). The patch only
+populates fields in the saved `training_state.json` and does not touch the
+training math, so arms either side of it stay comparable. One checkpoint was
+already written without the position: the 2e-2 modernization sweep winner, whose
+long run therefore re-sees 96 steps of epoch-2 data. Logged in
+[plan.md](plan.md#now-the-modernized-base).

@@ -30,14 +30,35 @@ the winner sits at an edge. Per the standing rule, the grid gets extended before
 anything is built on it.
 
 Relaunched 2026-09-11 as a single 7-point grid at `max_steps: 5000`, jobs
-1761232-1761238: 3.5e-3, 5e-3, 7e-3, 1e-2, 1.41e-2, 2e-2, 2.8e-2. Every point
-shares one horizon, so the table needs no cross-horizon caveat, and the three
-3500-step results above stand as an independent early read of the same curve. If
-2.8e-2 wins, extend again.
+1761232-1761238. All seven COMPLETED, ~2h45 each. Eval loss at step 5000:
 
-This is a real change from the stock base, where 7e-3 was the interior optimum
-three times over and 1e-2 was already +0.0050 worse. Expected direction: QK norm
-bounds attention logits, which is what usually limits the learning rate. The base changed twice at once: rmsnorm + swiglu +
+| LR | eval loss |
+|---|---|
+| 3.5e-3 | 2.2593 |
+| 5e-3 | 2.2499 |
+| 7e-3 | 2.2430 |
+| 1e-2 | 2.2395 |
+| 1.41e-2 | 2.2373 |
+| **2e-2** | **2.2356** |
+| 2.8e-2 | 2.2348 |
+
+Still monotone to the top, but flattening hard: the last three steps of the grid
+are worth 0.0022, 0.0017 and 0.0008. The final gap, 2.8e-2 over 2e-2, is 0.0008,
+which is inside `2 * sigma_seed` = 0.0019 at equal step ([noise
+floor](method.md#noise-floor)), so the top two points are not distinguishable.
+Grad norms are flat across the whole grid (median 0.105 to 0.124, no spikes), so
+nothing is unstable at the top; the grid is bounded by resolution, not stability.
+
+**Decided: 2e-2**, taken over the nominally-best 2.8e-2 because the two are
+within noise and the lower value is the safer of two indistinguishable points.
+The grid was not extended to 4e-2; that is a logged override
+([method.md](method.md#overrides-logged)).
+
+Against the stock base this is a 3x move: 7e-3 was the interior optimum there
+three times over, and here it is third worst at +0.0074.
+
+Expected direction: QK norm bounds attention logits, which is what usually
+limits the learning rate. The base changed twice at once: rmsnorm + swiglu +
 QK norm, and masking 20% to 15%. The architecture change moves compute per step,
 so the matching rule requires a fresh compute-neutral sweep before anything is
 compared against it.
@@ -69,6 +90,24 @@ base at its winning LR against stock ModernBERT at the same 15% / 80-10-10.
 exactly that masking, 6 h wall-clock, loss 2.2014 at step 10500 and long P@L
 0.4207 in dev-mode aggregation. So this is one run, not a pair, and it gives the
 paper a single number for what the modernization is worth as a bundle.
+
+Submitted 2026-09-11 as `t2-mod-long`, job 1762508, and it does not retrain the
+first 5000 steps: it resumes the 2e-2 sweep arm's terminal checkpoint with
+`resume.mode: continue`, which is what makes a 5000-step sweep affordable now
+that it is half an ablation run. Wall-clock matching then works on the total
+across both segments: the control achieved 21,617.9 s of steady-state training
+(nominal 6 h), the sweep arm spent 9,879.0 s reaching step 5000, so the resumed
+segment gets `max_wallclock_hours: 3.2558` (11,721 s). The clock excludes
+compile and warmup at both ends, so the two runs are matched on steady-state
+training time, which is what the rule asks for.
+
+One asymmetry, logged rather than fixed: the sweep ran on the pinned tree, which
+predates [PR #154](findings.md#terminal-checkpoints-did-not-record-the-data-position),
+so its terminal checkpoint carries no data position and the resumed run restarts
+epoch 2 from the top. It re-sees the 96 steps of epoch-2 data the sweep already
+trained on, 1.6% of the run, on data the model has already been through twice.
+Expected effect well under the 0.0019 resolution. The pinned tree now carries
+the fix, so every later Tier 2c long run resumes cleanly.
 
 ## Next: settle the masking split
 
