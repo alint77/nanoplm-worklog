@@ -14,7 +14,11 @@ What we chose, and the number that decided it. Measurements live in
 | muon LR | 7e-3 | interior minimum, three times |
 | muon weight decay | 1e-5 (dion ships 0.01) | -0.0050 |
 | muon beta2 / cautious / nesterov | 0.95 / off / off | all ties, library defaults kept |
-| MLM | 20% masking, 80/10/10 split, token | -0.0076 over the old 30% (split under review) |
+| MLM | 15% masking, 80/10/10 split, token | best 80/10/10 cell downstream (split under review) |
+| norm | rmsnorm | adopted, not measured (below) |
+| activation | swiglu | adopted, not measured (below) |
+| QK norm | on | adopted, not measured (below) |
+| canon kernel | size 7 | prior kernel work, see the canon benchmarks |
 | eval masking | pinned 15%, 80/10/10, fixed seed | see below |
 | precision | bf16, one fp8 pair at the end | below |
 | corpus | UniRef50 only | below |
@@ -76,6 +80,13 @@ case the coupling helps for some other reason.
 **UniRef50 only.** About 5.2 epochs of repetition at this budget. We considered
 adding corpora and decided the extra variable was not worth it for an
 architecture study.
+
+**MLM at 15% masking, 80/10/10** (team decision, 2026-09-11). Downstream picks
+it: it is the best 80/10/10 cell on long-range contacts (0.4149 corrected) and
+the best rate on PGYM, while costing +0.0075 in eval loss against 20%. The
+deciding metric is downstream, so downstream wins, and the choice is logged in
+[method.md](method.md#overrides-logged). Superseded reasoning below, kept because
+the loss-only argument is what the tier was designed to produce.
 
 **MLM at 20% masking, 80/10/10**, moved from 30% after the Tier 1c factorial
 ([results](results.md#the-mlm-objective)). 80/10/10 over 90/5/5 is a coin flip
@@ -185,6 +196,31 @@ Consequences for the writeup:
   ~44.3B tokens, against ~42,270 steps for the same tokens at 1M.
 - The batch was chosen at 400M parameters. The 600M transfer runs have a
   different critical batch and the writeup must say so.
+
+## The modernized baseline: rmsnorm, swiglu, QK norm
+
+Adopted on 2026-09-11 by decision, **not by measurement in this series**. The
+paper's baseline therefore becomes a *modernized* ModernBERT, and every later
+claim is a delta from that, not from stock.
+
+Why: all three are now standard in transformer practice and carry citations of
+their own, and kernel support follows the standard (sonicmoe and the CuTe canon
+backend both want rmsnorm and swiglu). Two of the three were forced anyway:
+`use_moe=true` refuses geglu, so the MoE tier needed swiglu as its control, and
+the CuTe canon backend covers rms_conv but not ln_conv, so a layernorm base
+would have made every canon arm lose for a kernel reason (prerequisite P7).
+Adopting rmsnorm retires that handicap.
+
+**This is a baseline change, not a finding, and the writeup must say so.** The
+three are cited, not validated here. What does get measured is the bundle: one
+wall-clock-matched long run of the modernized base against stock ModernBERT at
+the same 15% / 80-10-10 masking. The control already exists (`t1c-mlm15-m80`),
+so that is one run, and it gives the paper a single honest number for "what the
+modernization is worth" without claiming to decompose it.
+
+Consequence that is not optional: the new base changes compute per step, so the
+learning rate has to be re-swept on it before any Tier 2 comparison, per the
+matching rule. See [plan.md](plan.md#now-the-modernized-base).
 
 ## Runtime
 

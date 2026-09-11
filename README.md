@@ -12,7 +12,10 @@ architecture, then a greedy stack of whatever won. Each arm is 4 nodes for a few
 hours. Nothing is adopted on a hunch: an arm has to beat the base by more than
 the noise floor we measured up front.
 
-Batch, optimizer and masking are settled. Architecture is next.
+Batch, optimizer and masking are settled. rmsnorm, swiglu and QK norm were
+adopted into the base by decision rather than by an arm each, so the baseline is
+a modernized ModernBERT and the bundle gets one comparison run against stock.
+Architecture is next.
 
 ## Where to look
 

@@ -9,84 +9,78 @@ arms run fixed-step instead. Each arm changes exactly one thing from the base an
 runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The LR curve is
 the robustness check: an arm that only wins at one LR did not win.
 
-## Now: nothing running
+## Now: the modernized base
 
-Tier 1d finished 2026-09-11 and settled the base at 20% masking, LR 7e-3
-([results](results.md#the-lr-re-check-at-20-masking)). Next up are the four
-masking-split confirmation runs below, then Tier 2a off the new base.
+Two things, in this order, before any Tier 2 arm runs.
+
+**1. LR re-sweep on the new base (4 runs, fixed-step).** The base changed twice
+at once: rmsnorm + swiglu + QK norm, and masking 20% to 15%. The architecture
+change moves compute per step, so the matching rule requires a fresh
+compute-neutral sweep before anything is compared against it. `max_steps: 5000`,
+LRs bracketing 7e-3, same shape as Tier 1d.
+
+**2. The modernization long run (1 run, wall-clock matched).** The modernized
+base at its winning LR against stock ModernBERT at the same 15% / 80-10-10.
+**The control already exists**: `t1c-mlm15-m80-1739946` is stock architecture at
+exactly that masking, 6 h wall-clock, loss 2.2014 at step 10500 and long P@L
+0.4207 in dev-mode aggregation. So this is one run, not a pair, and it gives the
+paper a single number for what the modernization is worth as a bundle.
 
 ## Next: settle the masking split
 
-Downstream reversed the loss on 100/0/0, and it now beats 80/10/10 on 16 of 20
-band comparisons, every rate on local, short and medium
-([results](results.md#downstream-reverses-the-loss-on-pure-masking)). By the
-pre-registered rule that is an adopt at 5.8x threshold. Two things to do before
-flipping the base, in this order.
+Still open, and the 15% decision moved it rather than closing it. Downstream
+reversed the loss on 100/0/0, which beats 80/10/10 on 16 of 20 band comparisons
+([results](results.md#downstream-reverses-the-loss-on-pure-masking)). At the
+chosen 15% rate the long band is a tie (-0.0006) but the near-range bands show
+the **largest** 100/0/0 advantage anywhere in the grid: +0.0251 local, +0.0147
+short, +0.0108 medium. So the base runs 80/10/10 while the evidence for the
+alternative sits in the bands we are not deciding on.
 
-**1. An independent measurement, because every metric we have shares one
-confound.** The 10% random tokens train substitution robustness and the
-categorical Jacobian measures substitution sensitivity, so the zero-shot contact
-numbers could be rewarding twitchiness rather than structure. PGYM cannot
-referee it: the effect works out to 0.0028 scc against its 0.0040 threshold, so
-it is underpowered by construction, not dissenting.
+Two things settle it, and the first is worth more than the second.
 
-What reads the representation instead of the sensitivity is a probe on frozen
-features. Biotrainer ships `autoeval_supervised_contact.py` (logistic regression,
-AMPLIFY style), but it calls `embedder.compute_attention_map(sequence)` and
-nanoPLM runs FA3, which never materialises an attention matrix. So this needs an
-eager-attention recompute wired into the eval wrapper, plus re-enabling the
-framework: `pbc_supervised` and `flip` are both in `REMOVED_FRAMEWORKS`. Code
-first, then four checkpoints, no training. Alternative if that proves awkward:
-re-wire the supervised embedding tasks instead, which probe per-residue
-embeddings rather than attention.
+**1. Supervised contact**, once it is wired
+([below](#eval-work-the-new-metrics-need)). Every zero-shot metric we have reads
+the model's own output sensitivity, and the 10% random tokens in 80/10/10 train
+exactly the substitution robustness the categorical Jacobian measures. A probe
+on frozen features is the only thing that separates "better structure" from
+"twitchier model". PGYM cannot referee it: the effect works out to 0.0028 scc
+against its 0.0040 threshold, so it is underpowered by construction rather than
+dissenting.
 
 **2. Confirmation seeds, at 10500 steps and not 5000.** Two seeds each of
-(20%, 100/0/0) and (20%, 80/10/10). The replicate band (0.3875-0.3900) and the
-0.0022 threshold were both measured at step 10500, and long P@L moves 1.26e-5
-per step, so a 5000-step checkpoint cannot be compared against either. That is
-the same horizon-mismatch trap flagged for the Tier 1d loss threshold, and it
-bites harder here. About 380 GPU-hours, which is cheap against a decision that
-sets the base for every Tier 2 arm.
+(15%, 100/0/0) and (15%, 80/10/10). The replicate band and threshold were both
+measured at step 10500 and long P@L moves 1.26e-5 per step, so a 5000-step
+checkpoint cannot be compared against either. About 380 GPU-hours.
 
 Note throughout that eval loss cannot referee this comparison at all: the pinned
 eval feeds 10% random tokens, so the 100/0/0 arms are scored on a task they
 never trained for.
 
-## Tier 2a: standard recipe knobs (24 runs, 8 arms x 3 LRs)
+## Tier 2a: the two remaining recipe knobs (6 runs)
+
+Off the modernized base, 3 LRs each, wall-clock matched.
 
 | id | change | key | why |
 |---|---|---|---|
-| A1 | rmsnorm | `norm_type` | cheaper, widely adopted since ModernBERT |
-| A2 | swiglu | `mlp_activation` | the common alternative to geglu |
-| A3 | srelu | `mlp_activation` | squared ReLU, ungated. Cheap, and the only other value the config accepts |
-| A4 | QK norm on | `use_qk_norm` | attention-logit stability at depth |
-| A5 | QK norm before RoPE | `reorder_RoPE_QKNorm` | order is not obviously settled |
 | A6 | all-global attention | `attn_layer_pattern` | is alternating local/global earning its place |
 | A7 | rope theta 10k | `global_rope_theta` | 160k is inherited, not tuned for 512-token proteins |
-| A8 | GQA, 8 kv heads | `num_kv_heads` | cheaper attention, more tokens in 6 h |
 
-`mlp_activation` accepts only `{swiglu, geglu, srelu}`, and `srelu` is
-`relu(x).square()` (`config.py:513`), so A2 and A3 are the complete set of
-alternatives to the geglu base rather than a sample.
-
-Struck: tied embeddings (the base is untied and we are not testing it back) and
-span masking, since `eval_mlm_masking_strategy: token` is pinned and token
-masking is now the only strategy anyone runs. Weight decay and beta2 moved to
-the optimizer tier, where they belong.
+Struck from the original eight: rmsnorm, swiglu and QK norm are now in the base
+(see [decisions.md](decisions.md#the-modernized-baseline-rmsnorm-swiglu-qk-norm)),
+QK-norm ordering (`reorder_RoPE_QKNorm`) goes with it, GQA is dropped, and tied
+embeddings and span masking were already struck.
 
 ## Tier 2b: MoE and canon layers (~8 runs)
 
-After 2a and before 2c, because we expect to ship both and the question is how
-to configure them, not whether to use them.
-
-**MoE**, matched active parameters and swiglu (also forced: `use_moe=true`
-refuses geglu, `config.py:432`). **There is always a shared expert**:
-`MoELayer` builds one `ModernBertSwiGLUMLP(config)` that processes every token
-(`moe.py:468`) at the same `intermediate_size` as a routed expert, with no knob
-to disable it. So active MLP width is `(moe_top_k + 1) x intermediate_size` and
-sparsity is `(moe_num_experts + 1) / (moe_top_k + 1)`. That is why jul30's 48
-routed experts at top_k 3 were 49 total and 12.25x, not 16x. Any grid that
-ignores the shared expert is wrong on both axes.
+**MoE**, matched active parameters, swiglu (now the base, and also forced:
+`use_moe=true` refuses geglu, `config.py:432`). **There is always a shared
+expert**: `MoELayer` builds one `ModernBertSwiGLUMLP(config)` that processes
+every token (`moe.py:468`) at the same `intermediate_size` as a routed expert,
+with no knob to disable it. So active MLP width is
+`(moe_top_k + 1) x intermediate_size` and sparsity is
+`(moe_num_experts + 1) / (moe_top_k + 1)`. That is why jul30's 48 routed experts
+at top_k 3 were 49 total and 12.25x, not 16x. Any grid that ignores the shared
+expert is wrong on both axes.
 
 | cell | active experts | `moe_top_k` | expert `intermediate_size` | sparsity | `moe_num_experts` | total params |
 |---|---|---|---|---|---|---|
@@ -121,19 +115,19 @@ casts `Wi`/`Wo` to bf16 at load and `moe.py` casts activations in and back out,
 `_force_cutlass_moe_backend` is gone, so sonicmoe checkpoints evaluate on the
 sonicmoe path.
 
-**Canon layers**: `canon_layers_mode` x `canon_layer_set`. Running after 2a
-means we know the norm result, which matters because the CuTe canon backend
-covers rms_conv and bare conv only. On a layernorm base canon falls back to slow
-Triton and would lose on wall clock for a kernel reason rather than an
-architectural one. If rmsnorm (A1) wins in 2a this resolves itself; if not,
-canon runs handicapped and the writeup says so.
+**Canon layers** at **kernel size 7** (team decision, from the earlier kernel
+benchmarks), sweeping `canon_layers_mode` x `canon_layer_set`. rmsnorm in the
+base retires the Triton-fallback handicap that prerequisite P7 flagged, so these
+arms now run on the CuTe path they were designed for.
 
-## Tier 2c: our own ideas (27 runs + 9 second seeds)
+## Tier 2c: our own ideas (24 short + 8 long)
+
+Each arm gets a short fixed-step LR sweep, then one longer wall-clock-matched
+run at its best LR.
 
 | id | change | key |
 |---|---|---|
-| C1 | residual lambdas | `use_resid_lambdas` |
-| C2 | x0 lambdas | `use_x0_lambdas` |
+| C1+C2 | residual lambdas + x0 lambdas, combined into one arm | `use_resid_lambdas` + `use_x0_lambdas` |
 | C3 | ProRes | `use_prores` |
 | C4 | paired-head attention | `use_paired_head_attention` |
 | C5a | mHC-lite, layer boundary | `use_mhc_lite` + `mhc_lite_wrapping_level: layer` |
@@ -142,14 +136,33 @@ canon runs handicapped and the writeup says so.
 | C7 | Loopie | `use_loopie` |
 | C8 | Huginn recycling | `use_huginn_looping` |
 
-Struck: RePO. These need a second seed before anyone should believe them, which
-is the +9 runs at each arm's best LR.
+Struck: RePO. **Count to confirm:** combining x0 and resid lambdas leaves 8
+arms, so 24 short runs and 8 long ones. The team said 27 and 9, which is 9 arms,
+so either a ninth arm is coming or the count predates the merge.
 
-C1/C2 are unblocked: the lambdas are fp32 parameters cast to bf16 for the
+C1+C2 are unblocked: the lambdas are fp32 parameters cast to bf16 for the
 forward with fp32 masters in the optimizer, the ordinary mixed-precision path,
 not the `cast_forward_inputs` problem that broke the RoPE angles. Values near
 1.0 have ~0.4% spacing in bf16 and updates accumulate in the fp32 master.
 Checked under a real 1-rank FSDP2 with `MixedPrecisionPolicy`.
+
+## Eval work the new metrics need
+
+The team's reported set is PGYM Spearman total, zero-shot contact, supervised
+contact, NewPISCES365, and subcell. Only the first two run today.
+
+| metric | status |
+|---|---|
+| PGYM Spearman (total) | works |
+| contact, zero-shot | works |
+| contact, supervised | **needs code.** `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)`, and nanoPLM runs FA3, which never materialises an attention matrix. Needs an eager-attention recompute in the eval wrapper, plus lifting `pbc_supervised` out of `REMOVED_FRAMEWORKS` |
+| subcell (`scl`) | **needs code.** It is a `sequence_to_class` task in `PBC_SUPERVISED`, so it needs per-sequence embeddings out of the wrapper, and that framework is also in `REMOVED_FRAMEWORKS` |
+| NewPISCES365 | **not in our biotrainer.** Nothing by that name in PR #192: the supervised contact sets are train/val plus casp14, casp15 and selected_protein. Needs a source before it can be planned |
+
+Doing supervised contact first is worth more than its place in the priority list
+suggests: it is the one measurement that could settle the 100/0/0 masking
+question, because it reads a probe on frozen features instead of the model's own
+output sensitivity.
 
 ## Tier 3: greedy ladder (~16 runs)
 
@@ -159,18 +172,14 @@ Take the Tier 2 winners and add them one at a time in descending effect size,
 optimizer are the three most likely to interact, and one-at-a-time cannot see
 that.
 
-## Tier 4: leave-one-out (~12 runs)
+## Struck: Tier 4 and Tier 5
 
-For each ingredient in the final recipe, run the recipe without it, 2 seeds. An
-ingredient that does not hurt when removed does not go in the paper's recipe,
-however well it did alone. This is what catches ingredients that were only ever
-measuring each other.
-
-## Tier 5: transfer and precision (6 runs)
-
-4 runs of base vs final recipe at 574.8M (h1152/L36), 2 seeds each, plus 2 runs
-of fp8 vs bf16 on the final recipe. A win that does not survive the scale-up
-does not go in the paper.
+Leave-one-out (12 runs) and the 600M transfer plus fp8 pair (6 runs) are out of
+scope by team decision, 2026-09-11. Both consequences are logged in
+[method.md](method.md#overrides-logged): the final recipe is not leave-one-out
+validated, and nothing is checked at a second scale. If any budget comes back,
+the 4 transfer runs buy more than the 2 fp8 runs, because the batch size was
+chosen at 400M and its critical batch moves with scale.
 
 ## The decay campaign
 
@@ -194,26 +203,33 @@ revisiting now that it is no longer locked to the stable runs.
 
 ## Budget
 
-| tier | runs | note |
+| item | runs | note |
 |---|---|---|
+| LR re-sweep on the new base | 4 | fixed-step 5000, blocks everything below |
+| modernization long run | 1 | vs stock ModernBERT, control already exists |
 | 1c seeds | 4 | settle the masking split, fixed-step at 10500 |
-| 2a | 24 | 8 arms x 3 LRs |
-| 2b | ~8 | MoE sparsity x granularity, canon mode x set |
-| 2c | 27 | 9 arms x 3 LRs |
-| 2c seeds | 9 | second seed on our own ideas |
+| 2a | 6 | 2 arms x 3 LRs |
+| 2b | ~8 | MoE sparsity x granularity, canon mode x set at K=7 |
+| 2c short | 24 | 8 arms x 3 LRs, fixed-step |
+| 2c long | 8 | one wall-clock run per arm at its best LR |
 | 3 | ~16 | greedy ladder |
-| 4 | ~12 | leave-one-out |
-| 5 | 6 | transfer + fp8 |
-| **left** | **~106** | of ~140 for the whole series, ~12,700 GPU-hours |
+| **left** | **~71** | about 6,800 GPU-hours |
 
-Strike rows if that is too many. The tiers are ordered so cutting from the
-bottom of 2c costs the least.
+Roughly half the original ~140, mostly from striking Tier 4 and 5 and from
+folding six Tier 2a arms into the base. The tiers are ordered so cutting from
+the bottom of 2c costs the least.
 
 ## Still open
 
-- **Downstream numbers are development mode.** The reference ESM C report is
-  too, so the comparison is like-for-like, but neither is reportable. A
-  `development_mode: false` run is owed.
+- **Development-mode aggregation is now the standard**, so the earlier note
+  that a full-mode run was owed is retired. What is owed instead is a
+  full-mode rescore of whatever the paper reports as headline numbers, since
+  dev mode is 1.7x blunter and subsamples the benchmark.
+- **Stability metrics need a definition.** Everything needed is already logged
+  (434 keys per step in `debug_layerwise.jsonl`: per-family grad norms, weight
+  norms, per-layer residual RMS, logits abs_max/entropy/norm, plus per-step
+  `grad_norm` in the Slurm log). A reporting set has to be picked and a tool
+  written to extract it per arm.
 - **The loss / long-range-contact decoupling** in
   [results.md](results.md#one-arm-where-loss-and-structure-disagree). Val loss
   being blind to a downstream collapse is worth understanding before the final
