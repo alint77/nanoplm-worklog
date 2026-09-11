@@ -9,12 +9,11 @@ arms run fixed-step instead. Each arm changes exactly one thing from the base an
 runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The LR curve is
 the robustness check: an arm that only wins at one LR did not win.
 
-## Now: Tier 1d, the LR re-check at 20% masking (`t1d-`)
+## Now: nothing running
 
-4 runs, fixed-step at `max_steps: 5000`, LRs 3.5e-3 / 5e-3 / 7e-3 / 1e-2.
-Submitted 2026-09-10 as jobs 1750791, 1750793, 1750794, 1750795. Masking changed
-the task, so 7e-3 (tuned at 30%) has to be re-confirmed at 20% before the base
-moves. First use of the fixed-step rule.
+Tier 1d finished 2026-09-11 and settled the base at 20% masking, LR 7e-3
+([results](results.md#the-lr-re-check-at-20-masking)). Next up are the four
+masking-split confirmation runs below, then Tier 2a off the new base.
 
 ## Next: confirm the masking split (4 runs)
 
@@ -172,7 +171,7 @@ revisiting now that it is no longer locked to the stable runs.
 
 | tier | runs | note |
 |---|---|---|
-| 1d | 4 | LR re-check at 20% masking. RUNNING |
+| 1c seeds | 4 | confirm the masking split, fixed-step |
 | 2a | 24 | 8 arms x 3 LRs |
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set |
 | 2c | 27 | 9 arms x 3 LRs |

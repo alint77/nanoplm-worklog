@@ -5,6 +5,7 @@ the old tier prefixes, given per section so the docs and the filesystem agree.
 
 Contents: [batch size](#global-batch-size) ·
 [optimizer](#optimizer) · [MLM objective](#the-mlm-objective) ·
+[LR re-check](#the-lr-re-check-at-20-masking) ·
 [downstream](#downstream-across-67-arms) · [FA3 fork](#flashattention-3-fork-ab)
 
 Per-arm downstream scores for all 67 arms are in
@@ -240,8 +241,8 @@ mismatch, not necessarily worse representations. Deferred to downstream, which
 has now answered: see below.
 
 **Base moves from 30% to 20% masking, 80/10/10 kept.** Worth 0.0076 against the
-old base, 4x threshold. Still owed before adoption: re-check the winner at LR
-5e-3 and 1e-2, since 7e-3 was tuned at 30% masking (Tier 1d, running).
+old base, 4x threshold. The LR was re-checked at the new rate and 7e-3 still
+wins, so the base is 20% at 7e-3 (see below).
 
 ### Downstream reverses the loss on pure masking
 
@@ -295,6 +296,51 @@ This tier is also the clearest case for the eval-masking fix. Before
 reseeded every call, so it would have scored the 40% arm on a 40%-masked eval
 and the 15% arm on a 15%-masked one, then reported that 15% wins by a mile: an
 artefact of task difficulty, pointing exactly where our prior already did.
+
+---
+
+## The LR re-check at 20% masking
+
+Arms `t1d-*`. 4 runs, and the first use of the fixed-step rule: `max_steps:
+5000` instead of a 6 h wall-clock budget, at the new 20% / 80-10-10 masking,
+NorMuon, 4.19M tokens/step, 4 nodes each. Masking changes the task, and 7e-3 had
+been tuned at 30%, so it had to be re-confirmed before the base moved.
+
+| LR | 2000 | 3000 | 4000 | 5000 | vs best |
+|---|---|---|---|---|---|
+| 3.5e-3 | 2.3512 | 2.3098 | 2.2829 | 2.2623 | +0.0094 |
+| 5e-3 | 2.3416 | 2.3015 | 2.2758 | 2.2557 | +0.0028 |
+| **7e-3** | **2.3362** | **2.2976** | **2.2723** | **2.2529** | best |
+| 1e-2 | 2.3379 | 2.3013 | 2.2767 | 2.2579 | +0.0050 |
+
+**7e-3 holds.** An interior minimum with both neighbours worse, and the third
+independent confirmation of it: Tier 0b at 10B tokens, Tier 1a at 44B, and now
+at a different masking rate. The masking change did not move the optimum, so no
+grid extension is needed and the base moves to 20% at 7e-3.
+
+Two things worth recording about the method, since this was the first fixed-step
+tier.
+
+**Every run ended on the same step**, so there is no equal-step correction, no
+step spread to leak into a downstream score, and the final checkpoint is a
+common-step checkpoint by construction. The four jobs also started together and
+finished together despite landing on four different node groups, which is
+exactly what wall-clock matching could not give us.
+
+**The best-to-second gap peaks mid-run**, as the Tier 1a curves predicted:
+0.0017 at step 2000, 0.0037 at 3000, 0.0035 at 4000, 0.0028 at 5000. A longer
+sweep would have resolved this ranking slightly *worse*, not better.
+
+**Second place changes hands**, which is the constant-LR bias showing up
+directly: 1e-2 is second through step 3000 and 5e-3 is second from 3500 on. A
+short sweep flatters the higher LR. It did not change the winner here, but it is
+the reason the final long run still owes a re-check of the top two with decay
+attached.
+
+One honest caveat: the 0.0019 threshold was measured on 44B-token runs, and the
+noise floor at 5000 steps is not separately measured. 7e-3 over 5e-3 is 0.0028,
+so 1.5x a threshold borrowed from a different horizon. The direction agrees with
+two earlier independent measurements, which is what makes it safe to adopt.
 
 ---
 

@@ -11,7 +11,7 @@ What we chose, and the number that decided it. Measurements live in
 | shape | h1024 / L32 / 16 heads / 2688 MLP = 399.6M | MFU ladder, below |
 | global batch | 4.19M tokens (grad_accum 4 at 16 GPUs) | Tier 0b, below |
 | optimizer | NorMuon, `adjust_lr: spectral_norm` | -0.0289 over tuned AdamW |
-| muon LR | 7e-3 | interior minimum, twice |
+| muon LR | 7e-3 | interior minimum, three times |
 | muon weight decay | 1e-5 (dion ships 0.01) | -0.0050 |
 | muon beta2 / cautious / nesterov | 0.95 / off / off | all ties, library defaults kept |
 | MLM | 20% masking, 80/10/10 split, token | -0.0076 over the old 30% (split under review) |
