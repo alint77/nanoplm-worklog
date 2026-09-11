@@ -230,6 +230,11 @@ noise floor then resume to step 10500 and are read against `t2-mod-long` at
 equal step. That run only has to *reach* 10500, not finish, so none of this
 waits on it.
 
+Each of those resumes gets a **fresh `pretraining.ckp_dir`**, because the run
+directory is derived from the checkpoint's name rather than its location and a
+resume otherwise writes over the arm it resumed from
+([findings.md](findings.md#a-resumed-run-writes-into-the-source-runs-directory-unless-you-move-ckp_dir)).
+
 One asymmetry to state: `t2-mod-long` carries the 96-step data overlap from the
 unpatched pinned tree and these arms do not, because the fix is now in. Below
 resolution, logged in

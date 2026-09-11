@@ -637,3 +637,38 @@ training math, so arms either side of it stay comparable. One checkpoint was
 already written without the position: the 2e-2 modernization sweep winner, whose
 long run therefore re-sees 96 steps of epoch-2 data. Logged in
 [plan.md](plan.md#now-the-modernized-base).
+
+## A resumed run writes into the source run's directory unless you move ckp_dir
+
+`utils.py` derives the run directory from the **checkpoint's name, not its
+location**: `original_run_name = checkpoint_path.parent.name`, then
+`run_root = ckp_root / run_name`. So a resume with `pretraining.ckp_dir`
+unchanged reopens the source arm's directory and writes into it. The
+`pretraining.run_name` in the resuming config is ignored for pathing; it only
+shows up as a `-reN` suffix on the W&B run.
+
+That is deliberate, and the code says so ("so it does not exist yet when
+resuming into a fresh ckp_dir -- which is what you do to keep the source run
+read-only"). The intended pattern is to point `ckp_dir` somewhere new, and then
+the resumed run lands at `<new ckp_dir>/<original run name>/` with the source
+untouched.
+
+Missed on the first resume, `t2-mod-long` from the 2e-2 sweep winner. Two
+consequences, both artifact-level rather than scientific:
+
+- The gate cannot gate a resumed run. It waits for
+  `checkpoints/<config name>-<jobid>*/profiler_traces/chrome_trace.json`, which
+  never appears because the trace goes to the source arm's directory. The
+  patched gate logged "no trace after 1500s -> keeping it, cannot gate" and left
+  the job alone, which is the right fallback, but the run is ungated.
+- The terminal save writes `checkpoint-stable-end` again, at the resumed run's
+  final step, over the step-5000 checkpoint it resumed from. The sweep winner's
+  trace was already overwritten before this was noticed; the checkpoint was
+  copied out to `checkpoints/_preserved/t2p-mod-lr2e-2-step5000` first, verified
+  equal by `training_state.json`.
+
+Kept outside the run directory on purpose: a `checkpoint-`prefixed backup inside
+it would be visible to checkpoint-listing and archiving code.
+
+So every later resumed arm gets a fresh `ckp_dir`, and the sweep checkpoint it
+resumes from is preserved before launch either way.
