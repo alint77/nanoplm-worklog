@@ -198,7 +198,7 @@ contact, NewPISCES365, and subcell. Only the first two run today.
 |---|---|
 | PGYM Spearman (total) | works |
 | contact, zero-shot | works |
-| contact, supervised | **needs code.** `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)`, and nanoPLM runs FA3, which never materialises an attention matrix. Needs an eager-attention recompute in the eval wrapper, plus lifting `pbc_supervised` out of `REMOVED_FRAMEWORKS` |
+| contact, supervised | **blocked, not being pursued (2026-09-11).** `autoeval_supervised_contact.py` calls `embedder.compute_attention_map(sequence)` and FA3 never materialises an attention matrix. Upstream hit the same wall and raises rather than solving it. Forking FA3 to write the scores out was considered and dropped; an eager-attention recompute in the eval wrapper remains the cheap route if it comes back. Consequence: the 100/0/0 masking question has no independent referee, since every metric we can run reads the model's own output sensitivity |
 | subcell (`scl`) | **needs code.** It is a `sequence_to_class` task in `PBC_SUPERVISED`, so it needs per-sequence embeddings out of the wrapper, and that framework is also in `REMOVED_FRAMEWORKS` |
 | NewPISCES365 | **does not exist in biotrainer at all.** Searched the pinned PR #192 tree, `biotrainer-core`, all seven branches across the three forks (sacdallago upstream, peymanvahidi, alint77), every commit message in full history, and the downloaded datasets: no match for "pisces" anywhere. The supervised contact sets are train/val plus casp14, casp15 and selected_protein. It needs a data source and a task protocol from whoever proposed it |
 
