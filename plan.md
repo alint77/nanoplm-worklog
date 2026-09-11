@@ -13,12 +13,17 @@ the robustness check: an arm that only wins at one LR did not win.
 
 Two things, in this order, before any Tier 2 arm runs.
 
-**1. LR re-sweep on the new base (5 runs, fixed-step). SUBMITTED 2026-09-11**
-as jobs 1759190-1759194, arms `t2p-mod-lr{3.5e-3,5e-3,7e-3,1e-2,1.41e-2}`,
-`max_steps: 5000`, 4 h limit. The base changed twice at once: rmsnorm + swiglu +
+**1. LR re-sweep on the new base (5 runs, fixed-step). RUNNING since
+2026-09-11** as jobs 1759347-1759351, arms
+`t2p-mod-lr{3.5e-3,5e-3,7e-3,1e-2,1.41e-2}`, `max_steps: 3500`, 3 h limit. The base changed twice at once: rmsnorm + swiglu +
 QK norm, and masking 20% to 15%. The architecture change moves compute per step,
 so the matching rule requires a fresh compute-neutral sweep before anything is
 compared against it.
+
+Sweep length is 3500 steps, the new standard: the Tier 1d gap data puts the
+plateau at 3000-4000 and 5000 past it (see
+[method.md](method.md#matching-fixed-step-or-wall-clock)). An earlier submission
+of this same sweep at 5000 was cancelled 2 min in, during compile, and replaced.
 
 Five points rather than Tier 1d's four, extending to 1.41e-2: QK norm stabilises
 attention logits and can move the optimum up, and the Tier 1d curve already had
@@ -221,12 +226,12 @@ revisiting now that it is no longer locked to the stable runs.
 
 | item | runs | note |
 |---|---|---|
-| LR re-sweep on the new base | 4 | fixed-step 5000, blocks everything below |
+| LR re-sweep on the new base | 5 | fixed-step 3500, blocks everything below |
 | modernization long run | 1 | vs stock ModernBERT, control already exists |
 | 1c seeds | 4 | settle the masking split, fixed-step at 10500 |
 | 2a | 6 | 2 arms x 3 LRs |
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set at K=7 |
-| 2c short | 24 | 8 arms x 3 LRs, fixed-step |
+| 2c short | 24 | 8 arms x 3 LRs, fixed-step 3500 |
 | 2c long | 8 | one wall-clock run per arm at its best LR |
 | 3 | ~16 | greedy ladder |
 | **left** | **~71** | about 6,800 GPU-hours |

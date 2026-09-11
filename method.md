@@ -45,10 +45,16 @@ sigma 0.00010 at equal steps and **0.00130 at their wall-clock stops**, 13x
 noisier for the same runs.
 
 **Cost: usually lower.** The Tier 1a NorMuon curves establish the LR ranking by
-step 1500, and the best-to-second gap *peaks* around steps 3500-5000
-(0.0034-0.0042) then shrinks to 0.0007 by step 10500 as the top two converge. A
-short fixed-step sweep separates learning rates better than a full-budget one.
-Tier 1d runs at `max_steps: 5000`: 40 node-hours instead of 96.
+step 1500, and the best-to-second gap *peaks* around steps 3000-4000 then
+shrinks as the top two converge. A short fixed-step sweep separates learning
+rates better than a full-budget one, not just more cheaply.
+
+**LR sweeps run at `max_steps: 3500`** from 2026-09-11. Tier 1d measured the
+whole curve at one LR grid, and the best-to-second gap goes 0.0017 at step 2000,
+0.0034 at 2500, 0.0037 at 3000, 0.0036 at 3500, 0.0035 at 4000, 0.0026 at 4500,
+0.0028 at 5000. So 3500 sits on the plateau and 5000 is already past it: the
+longer sweep costs 30% more wall clock and resolves the ranking slightly worse.
+About 2.0 h per run on 4 nodes, so request a 3 h Slurm limit.
 
 Two things to get right:
 
