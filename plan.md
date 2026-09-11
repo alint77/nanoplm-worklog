@@ -27,9 +27,13 @@ back:
 
 Monotone down to the top of the grid, so **QK norm moved the LR optimum up** and
 the winner sits at an edge. Per the standing rule, the grid gets extended before
-anything is built on it. Second wave RUNNING as jobs 1761217, 1761218, 1761220,
-1761221: the two lost points (7e-3, 1e-2) plus 2e-2 and 2.8e-2 above. If 2.8e-2
-wins, extend again.
+anything is built on it.
+
+Relaunched 2026-09-11 as a single 7-point grid at `max_steps: 5000`, jobs
+1761232-1761238: 3.5e-3, 5e-3, 7e-3, 1e-2, 1.41e-2, 2e-2, 2.8e-2. Every point
+shares one horizon, so the table needs no cross-horizon caveat, and the three
+3500-step results above stand as an independent early read of the same curve. If
+2.8e-2 wins, extend again.
 
 This is a real change from the stock base, where 7e-3 was the interior optimum
 three times over and 1e-2 was already +0.0050 worse. Expected direction: QK norm
@@ -244,12 +248,12 @@ revisiting now that it is no longer locked to the stable runs.
 
 | item | runs | note |
 |---|---|---|
-| LR re-sweep on the new base | 5 | fixed-step 3500, blocks everything below |
+| LR re-sweep on the new base | 7 | fixed-step 5000, blocks everything below |
 | modernization long run | 1 | vs stock ModernBERT, control already exists |
 | 1c seeds | 4 | settle the masking split, fixed-step at 10500 |
 | 2a | 6 | 2 arms x 3 LRs |
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set at K=7 |
-| 2c short | 24 | 8 arms x 3 LRs, fixed-step 3500 |
+| 2c short | 24 | 8 arms x 3 LRs, fixed-step 5000 |
 | 2c long | 8 | one wall-clock run per arm at its best LR |
 | 3 | ~16 | greedy ladder |
 | **left** | **~71** | about 6,800 GPU-hours |

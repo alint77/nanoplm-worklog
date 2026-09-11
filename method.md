@@ -49,12 +49,14 @@ step 1500, and the best-to-second gap *peaks* around steps 3000-4000 then
 shrinks as the top two converge. A short fixed-step sweep separates learning
 rates better than a full-budget one, not just more cheaply.
 
-**LR sweeps run at `max_steps: 3500`** from 2026-09-11. Tier 1d measured the
-whole curve at one LR grid, and the best-to-second gap goes 0.0017 at step 2000,
-0.0034 at 2500, 0.0037 at 3000, 0.0036 at 3500, 0.0035 at 4000, 0.0026 at 4500,
-0.0028 at 5000. So 3500 sits on the plateau and 5000 is already past it: the
-longer sweep costs 30% more wall clock and resolves the ranking slightly worse.
-About 2.0 h per run on 4 nodes, so request a 3 h Slurm limit.
+**LR sweeps run at `max_steps: 5000`**, about 2.6 h per run on 4 nodes, so
+request a 4 h Slurm limit. Anything shorter is a judgement call rather than a
+saving: measured on the Tier 1d grid, the best-to-second gap goes 0.0017 at step
+2000, 0.0034 at 2500, 0.0037 at 3000, 0.0036 at 3500, 0.0035 at 4000, 0.0026 at
+4500, 0.0028 at 5000. The plateau is 3000-4000, so a 3500-step sweep resolves
+the ranking about as well for 30% less wall clock, and that is worth knowing if
+the queue is ever the bottleneck. 5000 is the standard because it costs little
+here and leaves more margin on a shallow curve.
 
 Two things to get right:
 
