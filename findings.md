@@ -541,6 +541,55 @@ column in that run was allocator-contaminated by the bs128 pass that preceded
 it and should be ignored; the `saved` column halved cleanly and is the one the
 extrapolation uses.
 
+### The trace gate's threshold does not transfer to MoE
+`tools/trace_gate.py` cancelled a healthy MoE smoke (job 1772896) at
+`exposed/compute = 15.6%` against its 8% threshold, blacklisted four innocent
+nodes, and gave up. The same config re-run ungated on a different draw reached
+steady state at 38.4% MFU.
+
+The gate's docstring states its assumption outright: "An arm that genuinely does
+more compute grows the denominator and hides comms better, so a HIGH ratio
+always means comms-bound, never 'this arm is heavy'." That holds for every arm
+tried so far because they all had ~400M parameters, so FSDP all-gather volume
+was constant and only the numerator could move. MoE breaks it: 3.13B parameters
+is about 8x the weight traffic, so the arm moves the numerator *and* the
+denominator, and the numerator moves harder.
+
+Per profiled step (9-step window), MoE g7-S12 against the healthy dense
+`t2a-glob` run:
+
+| | dense t2a-glob | MoE g7-S12 | |
+|---|---|---|---|
+| compute | 13464 ms | 16809 ms | +24.8% |
+| nccl | 4559 ms | 6370 ms | +39.7% |
+| exposed | 617 ms | 2629 ms | +326% |
+| ratio | 4.6% | 15.6% | gate fires |
+
+So 15.6% is this architecture's healthy value, not a bad draw. The dense gate
+keeps a 1.74x margin over its healthy 4.6%; transferring the same margin puts
+the MoE threshold near 27%. That number is a proposal, not a measurement: it
+rests on one healthy MoE draw, and the honest version needs the spread across
+two or three draws before it is written into the decision rules. Until then,
+**submit MoE arms ungated** rather than adjusting a threshold to fit one run,
+which is precisely the post-hoc tuning method.md exists to prevent.
+
+### MoE smoke: the numbers the grid budget needs
+g7-S12 (E=83, top_k 6, inter 384, 2 leading dense), `micro_batch_seqs: 64`,
+sonicmoe, 4 nodes, job 1773043:
+
+- **2714 ms/step** steady state, against ~2010 ms for the dense base: **+35%**.
+  In a 6.5 h arm that is ~8600 steps against dense's ~11600.
+- **38.4% MFU.** The jul20 worry that MoE would cost MFU (27% against 36%) does
+  not reproduce here.
+- **Peak VRAM 70,525 of 72,064 MB, 97.9%.** This is the number to worry about.
+  bs64 fits but with almost no headroom, and g7 is the worst cell. Consider
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` for the MoE arms.
+- Router health: dead experts collapse from 89 at step 20 to 1-3 by step 80,
+  entropy 0.958, max expert frequency 0.038 against the 1/83 = 0.012 ideal.
+  Load balancing is working; no sign of collapse.
+- Active parameters per token 402.19M against the dense base's 399.6M. The
+  +2.6M is exactly the routers (30 layers x 1024 x 83) and is unavoidable.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
