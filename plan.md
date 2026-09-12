@@ -249,6 +249,15 @@ unpatched pinned tree and these arms do not, because the fix is now in. Below
 resolution, logged in
 [findings.md](findings.md#terminal-checkpoints-did-not-record-the-data-position).
 
+### Result: not adopted
+
+Ran 2026-09-12 as jobs 1763082-1763087. **No arm is worth adopting and the base
+theta stands.** Supervised contact and PGYM both decline smoothly as theta
+falls (Spearman 0.900 against log M each), loss is blind to it, and the
+pre-registered decider turned out to be the one readout with sixteen times the
+zig-zag of the others. Full table and reasoning in
+[findings.md](findings.md#rope-theta-a-clean-negative-and-the-jacobian-readout-is-the-unstable-one).
+
 ### Deciding metric
 
 Long P@L on `selected_protein`, per the [standing rule](method.md#decision-rule),

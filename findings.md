@@ -740,3 +740,61 @@ Method note: the control had no provenance sidecar, so which checkpoint produced
 its published 0.4207 was an inference from the single checkpoint on disk. The
 re-score confirms it, reproducing 0.4205 -> 0.4209 (+0.0004), and incidentally
 re-confirms that full-mode-then-dev-aggregate and native dev mode agree.
+
+## Rope theta: a clean negative, and the Jacobian readout is the unstable one
+
+Six arms off the modernized base, FSS pattern and LR 2e-2 held fixed, fixed-step
+to 10500, one rule setting both thetas (longest wavelength = M x the largest
+relative offset that layer type can use: 512 global, 64 local). Dev mode, all on
+one eval tree. The anchor is the base theta at step 11039, a 5% step advantage,
+so the ladder is read among the arms first.
+
+| arm | global / local | loss | zero-shot long P@L | supervised long P@L | PGYM scc |
+|---|---|---|---|---|---|
+| anchor | 160k / 10k | 2.1751 | 0.4048 | 0.4533 | **0.3794** |
+| A | 10k / 10k | 2.1753 | 0.4072 | 0.4538 | 0.3713 |
+| B | 10k / 1200 | 2.1748 | **0.4283** | **0.4560** | 0.3694 |
+| C | 2000 / 250 | **2.1744** | 0.3713 | 0.4468 | 0.3729 |
+| D | 500 / 60 | 2.1749 | 0.3926 | 0.4387 | 0.3595 |
+| E | 100 / 12 | 2.1818 | 0.3515 | 0.3994 | 0.3587 |
+| F | 500 / 10k | 2.1772 | 0.4149 | 0.4376 | 0.3583 |
+
+**Nothing here is worth adopting.** On the single-M ladder (anchor, B, C, D, E)
+supervised contact and PGYM both decline smoothly as theta falls: Spearman
+against log M of 0.900 for each, with zig-zag (mean size of the steps that go
+against the trend) of 0.0007 and 0.0009. Two independent readouts agreeing on a
+smooth monotone curve is the strongest signal in this table, and it says the
+inherited theta is fine and lowering it costs. By M=1 the cost is unambiguous:
+worst on all four measures. So the hypothesis that motivated this ablation, that
+160k wastes most frequency pairs on a 512-token context, is **not supported**:
+the near-constant pairs are apparently earning their keep as implicit NoPE
+dimensions rather than going to waste.
+
+**Loss is blind to theta.** Range 0.0074 across all six, and that is entirely E
+and F; the other five span 0.0009, under half the resolution. C is nominally the
+best loss of any arm ever run here (2.1744) and is fourth of six on supervised
+contact. Anyone selecting a theta on loss would have picked almost at random.
+
+**The zero-shot readout is the unstable measurement, not the signal.** Its
+zig-zag is 0.0112, sixteen times the other two readouts, on the same five arms,
+while its Spearman (0.800) looks respectable. Concretely: B beats C by 0.0570
+and then C loses to D by 0.0213 going *further* down the ladder, which no smooth
+relationship produces. Two other observations line up with it: the step-5000 LR
+diagnostic on this architecture was also non-monotone with a 0.054 spread, and
+this architecture is the one where the probe and the Jacobian
+[came apart by 0.0485](#the-modernized-base-decouples-the-two-contact-readouts).
+The supervised and PGYM curves being smooth on the same checkpoints rules out
+"this architecture just has noisy downstream metrics" -- it is specific to the
+Jacobian. That matters for the deciding-metric question, because the
+pre-registered decider is the readout with sixteen times the jitter.
+
+B's zero-shot win (+0.0235 on the anchor) is therefore not banked: it is the
+largest number in the least trustworthy column, and B is +0.0027 on supervised
+(nothing) and -0.0100 on PGYM.
+
+**The local theta, on loss.** Lowering global alone is worse than lowering both:
+F is +0.0021 on the anchor while D is -0.0002, and at fixed global 500 adding
+the local change recovers 0.0023 (F 2.1772 -> D 2.1749). Small but consistent in
+sign, and it is the thing the original single-knob A7 arm would have measured as
+"theta does not help" for the wrong reason. On the downstream readouts the local
+effect has no consistent sign, so loss is the only place it resolves.
