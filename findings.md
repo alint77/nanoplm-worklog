@@ -476,7 +476,7 @@ matching it. The two dense layers are built at
 (`modeling.py:959`), which is 2688 in both cells, so they are exactly base
 MLPs and active width stays matched across every layer.
 
-### MoE uses *less* activation memory than dense, so micro_batch_seqs 128 holds
+### MoE OOMs at micro_batch_seqs 128, and an eager per-layer probe could not see it
 The worry was that MoE would OOM at `micro_batch_seqs: 128` and force 64. It
 does not, and the reason is the same fusion that makes sonicmoe fast. Activation
 bytes kept for backward, one MLP or MoE layer, 65536 tokens, bf16, measured on
@@ -502,11 +502,37 @@ backward: +5.4 GB at S12 over dense. Optimizer state is sharded, and at 3.31B
 over 16 GPUs is 207M params/GPU, roughly +2.2 GB over dense under NorMuon's
 three fp32 buffers. Call it +7.6 GB of state against -17 GB of activations.
 
-MoE at S12 should therefore sit *below* the dense baseline in peak memory, and
-the dense baseline already runs at 128. Confirm in the smoke run rather than
-trusting the arithmetic; if it does OOM, the uniform fallback is
-`micro_batch_seqs: 64` (grad_accum 4 -> 8) applied to all four cells, not
-activation checkpointing, which would change compute per step.
+From that I predicted MoE would sit *below* the dense baseline in peak memory
+and that 128 would hold. **It does not. g7-S12 OOMs at 128**, on job 1772818,
+with 90.89 GiB allocated on a 95 GiB card, failing on a 768 MiB allocation
+during the first compiled forward.
+
+The prediction was wrong because the probe was eager and the training loop
+compiles. Inductor materializes, per MoE layer, exactly the buffers sonicmoe's
+fusion avoids in eager:
+
+    buf52 = (T*top_k, inter)    = (393216, 384)   288 MB
+    buf53 = (T*top_k, 2*inter)  = (393216, 768)   576 MB
+    buf57 = (T*top_k, hidden)   = (393216, 1024)  768 MB
+
+at `T*top_k = 65536 * 6`. The fusion is real and the compiled graph does call
+the fused kernels (`quack.gemm_gated_out`, `quack.gemm_out`,
+`sonicmoe._router_forward` are all in the generated code, so there is no silent
+fallback to cutlass), but inductor still allocates the operands and keeps the
+ones the grouped-GEMM backward needs. An eager single-layer probe cannot see
+any of this, and neither can a 32x extrapolation from it.
+
+The general form of the error: **a per-layer eager measurement does not predict
+a compiled model's peak memory**, and "saved for backward in eager" is not the
+quantity that decides whether a run fits. The only instrument that answers the
+memory question is the run itself.
+
+`top_k` is the multiplier on all three buffers, which is the second reason to
+prefer 4 active experts over 7: at top_k 3 they are half the size.
+
+The fix is `micro_batch_seqs: 64` (grad_accum 4 -> 8) applied uniformly to every
+MoE cell, which halves T and therefore all three buffers. Not activation
+checkpointing, which would change compute per step.
 
 One caveat on the numbers above: transient peak within a MoE forward is higher
 than the saved figure (1.7-2.5 GB vs ~0.95), but it is one layer at a time, so
