@@ -259,6 +259,25 @@ tier 2b runs after 2a.
 sublayer, nanoplm defaults to per layer boundary, and
 `mhc_lite_wrapping_level` already accepts both, so rather than pick we run both.
 
+## Rope theta: 10k global / 1200 local
+
+Adopted 2026-09-12 (arm B). The base config now carries it, so every later tier
+inherits it, and **arm B itself is the control for Tier 2b and 2c**: it is
+already trained to 10500 and fully evaluated, so no new reference run is needed.
+
+Called by the team on the zero-shot contact result, +0.0235 on the base theta.
+Recorded as decided rather than measured: on the other three readouts B is
++0.0027 on supervised contact (nothing), -0.0003 on loss (nothing) and **-0.0100
+on PGYM**, and the readout it wins on is the one with sixteen times the zig-zag
+of the others on the same checkpoints
+([findings.md](findings.md#rope-theta-a-clean-negative-and-the-jacobian-readout-is-the-unstable-one)).
+The defensible claim in the writeup is that theta between 1200 and 160k does not
+matter, not that 10k/1200 is better.
+
+No LR sweep for the new base: RoPE is a rotation, it preserves `||q||` and
+`||k||`, and QK norm is applied after it, so the logit scale that sets the LR
+ceiling is untouched. 2e-2 carries over.
+
 ## Measured and not adopted
 
 **TE fused RoPE.** Works, about 2x faster at the kernel level, and the step time
