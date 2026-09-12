@@ -850,3 +850,56 @@ Method note for later arms: *predicted* compute neutrality is not the test, and
 neither is measured step time on one node draw. The trace decides, and the
 category breakdown separates "this arm costs more" from "this node is slower" in
 a way total step time cannot.
+
+## newPISCES364, and why PBC_SUPERVISED had never run
+
+**newPISCES364 is a test split of PBC's secondary-structure task**, not a contact
+set: `SET=newPISCES364` on 364 of the 11205 sequences in
+`secondary_structure.fasta`, alongside casp12 (20), casp14 (17), casp13 (12),
+train (9712) and val (1080) -- and **no `SET=test` at all**, unlike every other
+PBC dataset (`scl` ships train/val/test). Provenance per the dataset README:
+FLIP-sampled following the ProtT5 paper, cited to Klausen 2019 (NetSurfP-2.0).
+One sequence overlapping CASP14 was kept here and dropped from CASP14.
+
+Biotrainer needs no change to report it. `get_split_lists` ends with
+`case _: # Treat all other sets as testing sets` and `testing_ids` is a dict, so
+every non-train/val/pred set name becomes its own named test set. The `splits`
+field on the dataset registry is for datasets spread across separate *files* and
+is unrelated. Results on the new base (arm B, dev mode, 3-state accuracy):
+
+| test set | accuracy | balanced accuracy |
+|---|---|---|
+| **newPISCES364** | **0.8032** | 0.7969 |
+| casp13 | 0.8342 | 0.8385 |
+| casp12 | 0.7573 | 0.7573 |
+| casp14 | 0.7457 | 0.7494 |
+
+The whole supervised menu arrives in the same run, which is how `scl` finally has
+a number too (0.589 balanced accuracy, validation).
+
+**Why it had never run, which is the part worth keeping.** Three environmental
+faults in a row, none of them in our code and none visible from the framework
+list:
+
+1. **Booster compute nodes have no outbound network.** The first attempt died on
+   `Errno 101 Network is unreachable` fetching the dataset bundle from nextcloud.
+   `force_download` on a compute node can only fail; any new PBC dataset has to
+   be pulled from a login node first. The 26 MB archive now sits in
+   `eval/data/PBC_SUPERVISED/`.
+2. **The venv violates biotrainer's own dependency pin.** biotrainer requires
+   `ruamel.yaml>=0.17.40,<0.18.0`; the venv had 0.19.1, which deleted the
+   module-level `yaml.dump`/`yaml.load` API that biotrainer calls in at least two
+   places. Every supervised task therefore crashed while writing its `out.yml`,
+   which is why this framework had never completed a single task in this series.
+   Fixed by installing 0.17.40 into `eval/pydeps` with `--target`, so it shadows
+   the venv only under the eval `PYTHONPATH`; nanoplm does not import ruamel at
+   all, so training is untouched, and nothing here touches metric computation.
+3. **A crashed supervised run poisons the next one.** It leaves a 30 GB
+   embeddings HDF5 (next run: `Unable to create dataset (name already exists)`)
+   and a **0-byte `out.yml`**, which biotrainer's load-existing-output path will
+   happily find. Wipe the output dir before any retry.
+
+**Cost, before this becomes a standing column.** 34 min per arm for all 7 tasks,
+of which ~13 min is embedding, plus **~30 GB of per-residue embeddings** written
+to the output dir per arm. Fine for a handful of arms; not something to attach
+to all 67 worklist rows without pruning the embedding files between runs.
