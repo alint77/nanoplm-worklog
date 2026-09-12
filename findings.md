@@ -903,3 +903,43 @@ list:
 of which ~13 min is embedding, plus **~30 GB of per-residue embeddings** written
 to the output dir per arm. Fine for a handful of arms; not something to attach
 to all 67 worklist rows without pruning the embedding files between runs.
+
+## All-global attention: worse or tied on everything, and not adopted
+
+`attn_layer_pattern: F` (32 full-attention layers) against the FSS base (11
+full, 21 sliding at +-64), both off the modernized base at 2e-2, both
+fixed-step to 10500, both scored on the full battery in dev mode:
+
+| metric | FSS | all-global | delta |
+|---|---|---|---|
+| eval loss @10500 | 2.1748 | 2.1772 | +0.0024 (worse) |
+| PGYM total SCC | 0.3694 | 0.3552 | -0.0142 |
+| zero-shot contact, sel long P@L | 0.4283 | 0.4190 | -0.0093 |
+| **supervised contact, sel long P@L** | **0.4560** | **0.4557** | **-0.0003** |
+| supervised contact, casp14 long P@L | 0.2153 | 0.2082 | -0.0071 |
+| **newPISCES364 accuracy** | **0.8032** | **0.7948** | **-0.0084** |
+| casp13 / casp12 / casp14 accuracy | 0.8342 / 0.7573 / 0.7457 | 0.8285 / 0.7162 / 0.7230 | -0.0057 / -0.0411 / -0.0227 |
+| scl balanced accuracy | 0.5655 | 0.5301 | -0.0353 |
+
+**On the deciding metric it is a tie**: 0.0003, a seventh of `2*sigma_seed`. The
+pre-registered rule therefore returns "no difference", and on that alone
+all-global would be a wash. Everything else breaks the tie in one direction:
+eight of the remaining metrics are negative and none is positive, which under a
+sign test is p ~ 0.004 if each were a coin flip, and several are far outside
+noise on their own (scl -0.035, casp12 -0.041, PGYM -0.014 at roughly 7 sigma).
+
+**Not adopted.** It is worse or tied on every measure and it costs more: 21287 s
+against 20409 s for the same 10500 steps. Only ~0.67% of that is real compute,
+the rest being the node draw
+([findings.md](findings.md#the-sliding-window-buys-1-of-step-time-and-a-36-step-time-gap-was-the-network)),
+but there is no term on the other side of the ledger to pay for it.
+
+**What this says together with the trace result.** The sliding window saves under
+1% of step time, so the alternating pattern was never earning its place on
+compute; and removing it does not help quality either. The honest reading is that
+at 512 tokens and hidden 1024 the attention pattern barely matters in either
+direction, with the alternating default very slightly ahead. Two consequences
+worth carrying: the window is not a meaningful lever at this scale, so tuning it
+further is not worth runs; and if sequence length grows in a later series both
+halves of this conclusion have to be re-measured, because the window's FLOP
+saving scales with L while its wall-clock saving here did not.

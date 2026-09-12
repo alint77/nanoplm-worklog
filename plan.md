@@ -276,6 +276,14 @@ Struck from the original eight: rmsnorm, swiglu and QK norm are now in the base
 QK-norm ordering (`reorder_RoPE_QKNorm`) goes with it, GQA is dropped, and tied
 embeddings and span masking were already struck.
 
+### All-global: result
+
+Ran 2026-09-12 as job 1766751, fixed-step 10500 after the trace showed the arm is
+compute-neutral. **Not adopted**: tied on the deciding metric (-0.0003) and worse
+on all eight others, while costing more wall clock. Tier 2a is therefore closed
+with the base unchanged on both knobs. Table and reasoning in
+[findings.md](findings.md#all-global-attention-worse-or-tied-on-everything-and-not-adopted).
+
 ## Tier 2b: MoE and canon layers (~8 runs)
 
 **MoE**, matched active parameters, swiglu (now the base, and also forced:
