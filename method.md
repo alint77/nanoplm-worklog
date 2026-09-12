@@ -276,6 +276,18 @@ which is the headline comparison against stock ModernBERT, gets an LR up to one
 grid step below optimal, which would understate the modernization. Reopening it
 costs one 2h45 sweep arm at 4e-2 plus a rerun of the long run.
 
+**2026-09-12: the deciding metric is ambiguous now that both contact readouts
+run.** The pre-registration named zero-shot long P@L on `selected_protein` as
+deciding, and it was chosen when supervised contact could not run at all. On the
+modernized base the two readouts disagree in opposite directions, past 5 sigma
+each ([findings.md](findings.md#the-modernized-base-decouples-the-two-contact-readouts)).
+The rule as written does not say which wins, so it cannot settle whether the
+adopted base is better or worse than stock ModernBERT. Flagged to the team
+rather than resolved here, because picking the readout after seeing the result
+is exactly what pre-registration exists to prevent. Note for whoever settles it:
+the probe reads frozen features, the Jacobian reads the model's own output
+sensitivity, and only the latter regressed.
+
 **2026-09-11: the masking split cleared the rule and was not adopted.**
 
 What cleared: (20%, 100/0/0) beats (20%, 80/10/10) by 0.0127 on the deciding

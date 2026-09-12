@@ -672,3 +672,71 @@ it would be visible to checkpoint-listing and archiving code.
 
 So every later resumed arm gets a fresh `ckp_dir`, and the sweep checkpoint it
 resumes from is preserved before launch either way.
+
+## The modernized base decouples the two contact readouts
+
+The modernized base (rmsnorm + swiglu + QK norm, 15% 80/10/10, NorMuon 2e-2)
+against stock ModernBERT at identical masking (`t1c-mlm15-m80`), both
+wall-clock matched to 6 h, both scored native dev mode on the same eval tree,
+steps 11039 and 10977:
+
+| metric (dev) | stock | modernized | delta |
+|---|---|---|---|
+| eval loss @10500 | 2.2014 | 2.1751 | **-0.0263** |
+| PGYM total SCC | 0.3600 | 0.3794 | **+0.0194** |
+| zero-shot contact, sel long P@L | 0.4209 | 0.4048 | **-0.0161** |
+| zero-shot contact, casp14 / casp15 long P@L | 0.1656 / 0.1928 | 0.1509 / 0.1691 | -0.0147 / -0.0238 |
+| supervised contact, sel long P@L | 0.4162 | 0.4533 | **+0.0371** |
+| supervised contact, casp14 / casp15 long P@L | 0.1871 / 0.2092 | 0.2092 / 0.2330 | +0.0222 / +0.0238 |
+
+`sigma_seed` on the deciding metric is 0.0020 over the six base replicates, so
+both contact results are past 5 sigma however the denominator is taken, and
+every dataset moves the same way within each readout. **The two readouts
+disagree in opposite directions**, which no previous arm in this series has
+done:
+
+| arm | zero-shot | supervised | probe - Jacobian |
+|---|---|---|---|
+| t0-rep1 (stock, 20% mask) | 0.3950 | 0.3941 | -0.0009 |
+| t1c-mlm15-m80 (stock, 15%) | 0.4209 | 0.4162 | -0.0047 |
+| t2-mod-long (modernized) | 0.4048 | **0.4533** | **+0.0485** |
+
+On both stock architectures the two readouts agree to within noise. On the
+modernized one the probe beats the Jacobian by 0.0485, and its probe score is
+the best of any arm measured. So the contact structure is not lost: a trained
+probe on the attention maps recovers *more* of it than from either stock model.
+What degrades is the model's own output-sensitivity readout, which is what the
+categorical Jacobian measures.
+
+**Leading hypothesis, not yet a finding.** Of the three bundled changes only QK
+norm touches attention, and both contact metrics read attention. The
+implementation is parameter-free `F.rms_norm(q, (head_dim,))` with no learnable
+gain, so `|q| = |k| = sqrt(head_dim)` exactly and the logits are capped at
++-sqrt(head_dim) after the `1/sqrt(head_dim)` scale. That is a hard ceiling on
+how sharp any head can become, which would dampen a perturbation-based readout
+while leaving the attention pattern's *relative* structure intact. It fits the
+whole pattern: loss and PGYM fine, probe better, Jacobian worse. The test is one
+arm of `base-modern15` with `use_qk_norm: false`; the candidate fix if it
+confirms is a learnable per-head scale, as in OLMo-2 and ViT-22B.
+
+**Confounds, stated rather than resolved.** The comparison bundles the three
+architecture changes with the LR (7e-3 -> 2e-2), which is the only other config
+difference (everything else including all four eval-masking keys and
+`eval_mask_seed` is identical, so the losses are scored on the same masked
+positions). A diagnostic on three sweep checkpoints at step 5000, same
+architecture, LR the only variable, came back **non-monotone**: 7e-3 0.3662,
+2e-2 0.3123, 2.8e-2 0.3531 on sel long P@L. With no downstream sigma at 5000
+steps that neither implicates nor exonerates the LR; what it does show is that
+the zero-shot readout swings by 0.054 across LRs of one architecture, which is
+itself consistent with that readout being the fragile measurement.
+
+**Loss did not predict any of this.** Across the 38 arms with both numbers, sel
+long P@L regressed on eval loss gives r = -0.237, r^2 = 0.056. Among the 20 arms
+within loss 2.19-2.21 the metric spans 0.0312, 7.6x the noise floor. Loss and
+contact are close to independent axes in this series, so the -0.0263 loss win
+never carried a prediction about contact either way.
+
+Method note: the control had no provenance sidecar, so which checkpoint produced
+its published 0.4207 was an inference from the single checkpoint on disk. The
+re-score confirms it, reproducing 0.4205 -> 0.4209 (+0.0004), and incidentally
+re-confirms that full-mode-then-dev-aggregate and native dev mode agree.
