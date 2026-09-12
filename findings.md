@@ -398,11 +398,19 @@ exact active-parameter match.
 
 | active | top_k | inter | E (S8) | ms S8 | E (S12) | ms S12 | 128-aligned |
 |---|---|---|---|---|---|---|---|
-| 3 | 2 | 896 | 23 | 12.46 | 35 | 12.66 | yes |
-| 4 | 3 | 672 | 31 | **12.35** | 47 | **12.56** | no |
-| 5 | 4 | 512 | 39 | 11.88 | 59 | 12.28 | yes |
-| 7 | 6 | 384 | 55 | 12.61 | 83 | 13.16 | yes |
-| 8 | 7 | 336 | 63 | 13.40 | 95 | 14.02 | no |
+| 3 | 2 | 896 | 23 | 12.39 | 35 | 12.64 | yes |
+| 4 | 3 | 672 | 31 | **12.43** | 47 | **12.58** | no |
+| 5 | 4 | 512 | 39 | 12.05 | 59 | 12.17 | yes |
+| 7 | 6 | 384 | 55 | 12.63 | 83 | 13.10 | yes |
+| 8 | 7 | 336 | 63 | 13.41 | 95 | 13.96 | no |
+
+(An eager dense SwiGLU at the same shape is 12.62 ms, for scale. Training
+compiles the model, so that is not the dense arm's real step cost and no
+"MoE beats dense" claim rests on it.)
+
+Every number above is the min of three 10-iteration timings in a **fresh
+process per cell**, after the single-process version of this sweep was caught
+producing garbage (below). The two runs agree within 1.4% on all ten cells.
 
 Two results.
 
@@ -414,7 +422,7 @@ missing CUTLASS headers while the sonicmoe probe ran, which incidentally proves
 sonicmoe was not silently falling back.)
 
 **`top_k` predicts it, monotonically, at both sparsities.** Going 2 -> 7 active
-routed experts costs 7.5% at S8 and 10.8% at S12 at constant active FLOPs. That
+routed experts costs 8.2% at S8 and 10.4% at S12 at constant active FLOPs. That
 is dispatch and combine traffic scaling with token replication, the same
 mechanism that makes sonicmoe win in the first place: the fused gather/scatter
 is cheaper than materializing the dispatch buffer, but it is not free, and it
@@ -426,19 +434,31 @@ micro-step and `global_batch_tokens: 4194304` over 16 GPUs comes out as
 `grad_accum = 4`. The table above is therefore at the shape that actually runs,
 not a proxy for it.
 
-The penalty is strongly token-count dependent, which is why that matters:
-336 is only +1.8% over 672 at 8192 tokens, +8.5% at 65536, and at 262144 (a
-full optimizer step's worth, which no single forward ever sees) the ordering
-holds but every MoE cell catches or passes an *eager* dense MLP: dense 49.37 ms,
-g4-S8 46.54, g4-S12 46.97, g7-S8 47.98, g7-S12 49.31, g8-S8 51.02. Do not read
-that last row as "MoE is faster than dense": the dense reference there is an
-uncompiled `ModernBertSwiGLUMLP` that materializes its intermediates, and
-training compiles the model. It is a valid comparison *between* MoE cells, which
-were all measured the same way, and nothing more.
+The penalty is strongly token-count dependent, which is why that matters: 336
+is only +1.8% over 672 at 8192 tokens and +8.5% at 65536. At 262144 (a full
+optimizer step's worth, which no single forward ever sees) the ordering holds:
+dense 49.15, g5-S8 45.58, g4-S12 47.08, g7-S12 49.34, g8-S8 51.02, g8-S12 53.83.
+
+### Benchmark one cell per process, or the tail of the sweep is fiction
+The 262144 sweep was first run as one process looping over cells with
+`del m; torch.cuda.empty_cache()` between them. Its first six rows were right
+and its last three were not: g8-S12 came out at 92.04 ms and g5-S8 at 77.48,
+against 53.83 and 45.58 when each is run alone. That is +71% and +70% of pure
+fiction, non-monotone against every neighbouring cell, from allocator
+fragmentation accumulating across cells with large working sets. `empty_cache()`
+does not undo it.
+
+It was caught only because the numbers broke monotonicity in `top_k`, which the
+rest of the data had already established. Without that prior there was nothing
+in the output to distinguish the bad rows from the good ones, and two of them
+would have gone into a decision. The 65536 table above was re-run the same way
+as a check and came back clean, so nothing built on it moved, but the lesson
+stands: **one cell per process for anything that decides something**, and build
+an ordering prior you can sanity-check the tail against.
 
 `inter 512` at top_k 4 is dominated. It is the only row that is not an exact
-active match (2560, -4.76%), and per active FLOP it is 1.0% slower than 672 at
-S8 and 2.7% slower at S12. It buys nothing.
+active match (2560, -4.76%), and per active FLOP it is 1.8% slower than 672 at
+S8 and 1.6% slower at S12. It buys nothing.
 
 One knock-on: sonicmoe's fused top-k kernel is gated on `E <= 4096 and K <= 16
 and E % 8 == 0` (`sonicmoe/functional/forward.py`). Every cell in the grid has
