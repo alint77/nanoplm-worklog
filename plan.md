@@ -284,7 +284,7 @@ on all eight others, while costing more wall clock. Tier 2a is therefore closed
 with the base unchanged on both knobs. Table and reasoning in
 [findings.md](findings.md#all-global-attention-worse-or-tied-on-everything-and-not-adopted).
 
-## Tier 2b: MoE and canon layers (~8 runs)
+## Tier 2b: MoE and canon layers
 
 **MoE**, matched active parameters, swiglu (now the base, and also forced:
 `use_moe=true` refuses geglu, `config.py:432`). **There is always a shared
@@ -292,47 +292,84 @@ expert**: `MoELayer` builds one `ModernBertSwiGLUMLP(config)` that processes
 every token (`moe.py:468`) at the same `intermediate_size` as a routed expert,
 with no knob to disable it. So active MLP width is
 `(moe_top_k + 1) x intermediate_size` and sparsity is
-`(moe_num_experts + 1) / (moe_top_k + 1)`. That is why jul30's 48 routed experts
-at top_k 3 were 49 total and 12.25x, not 16x. Any grid that ignores the shared
+`(moe_num_experts + 1) / (moe_top_k + 1)`. Any grid that ignores the shared
 expert is wrong on both axes.
 
-| cell | active experts | `moe_top_k` | expert `intermediate_size` | sparsity | `moe_num_experts` | total params |
+`moe_leading_dense_layers: 2`, so 30 of 32 layers are MoE. The two dense layers
+are built at `moe_dense_intermediate_size = (top_k + 1) * intermediate_size`
+(`modeling.py:959`), which is 2688 in every cell, so they are exactly base MLPs
+and active width is matched in every layer of the model.
+
+| cell | active | `moe_top_k` | expert inter | sparsity | `moe_num_experts` | total |
 |---|---|---|---|---|---|---|
-| g4-S8 | 4 | 3 | 672 | 8x | 31 | 2.13B |
-| g4-S12 | 4 | 3 | 672 | 12x | 47 | 3.12B |
-| g8-S8 | 8 | 7 | 336 | 8x | 63 | 2.13B |
-| g8-S12 | 8 | 7 | 336 | 12x | 95 | 3.12B |
+| g4-S8 | 4 | 3 | 672 | 8x | 31 | 2.135B |
+| g4-S12 | 4 | 3 | 672 | 12x | 47 | 3.126B |
+| g7-S8 | 7 | 6 | 384 | 8x | 55 | 2.135B |
+| g7-S12 | 7 | 6 | 384 | 12x | 83 | 3.127B |
 
-Dense base is 0.40B for reference. Active MLP params per layer are 8,257,536 in
-every cell, same as dense.
+Active MLP params per layer are 8,257,536 in every cell, same as dense. Measured
+active parameters per token: 402.19M against the dense base's 399.6M, the
+difference being the routers (30 x 1024 x E), which is unavoidable.
 
-**Why 8x is still in the grid even though jul30 landed on 12x.** The jul30
-sparsity ablation (h1024/L19, inter 512, top_k 3, 3 h wall-clock matched):
+**Why 7x384 and not 8x336.** Expert width turns out not to predict step time at
+all; `top_k` does, monotonically, because dispatch and combine traffic scales
+with token replication. 8 active at inter 336 costs +8.5% over 4 active at 672,
+where 7 active at 384 costs +2.1%, and both match active parameters exactly. See
+[findings.md](findings.md#expert-width-does-not-matter-top_k-does). `inter 512`
+at top_k 4 was considered and rejected: it is the only candidate that misses
+exact active matching (-4.76%) and it is still slower per active FLOP than 672.
 
-| arm | total experts | sparsity | total params | final loss | MFU | tokens |
-|---|---|---|---|---|---|---|
-| moe4x | 13 | 3.25x | 0.41B | 2.2999 | 40.2% | 37.7B |
-| moe8x | 33 | 8.25x | 0.95B | 2.2768 | 38.4% | 36.0B |
-| moe12x | 49 | 12.25x | 1.37B | **2.2688** | 38.7% | 36.3B |
+**`micro_batch_seqs: 64`, uniformly, forced by memory.** At 128 the g7-S12 cell
+OOMs: the compiled graph materializes `(T*top_k, *)` buffers that sonicmoe's
+fusion avoids in eager, 1.6 GB per layer at `T*top_k = 65536*6`. 64 fits, at
+97.9% of the card on the worst cell. grad_accum goes 4 -> 8. This is applied to
+all four cells so the within-grid comparison is unaffected, and under wall-clock
+matching the MoE arms pay for the extra micro-steps themselves. See
+[findings.md](findings.md#moe-ooms-at-micro_batch_seqs-128-and-an-eager-per-layer-probe-could-not-see-it).
 
-12x won, but the returns collapse: -0.0231 from 3.25x to 8.25x, then only
--0.0080 from 8.25x to 12.25x while total parameters grew 44%. And jul30 never
-measured a noise floor, so -0.0080 may well be noise. Keeping 8x costs 2 runs
-and re-tests that conclusion against a sigma we now have. If 12x wins again by
-more than 2 sigma it is settled properly; if not, we ship a model 1B parameters
-smaller for free.
+**Backend `sonicmoe`**, confirmed in the compiled graph (`quack.gemm_gated_out`,
+`quack.gemm_out`, `sonicmoe._router_forward`), not a silent cutlass fallback.
+No CUTLASS prebuild is needed on this path.
 
-Known issue: the CUTLASS grouped-GEMM JIT has a multi-rank build race, so
-prebuild the `.so` before `srun`. The old warning that eval falls back to
-cutlass because the quack GEMM rejects bf16 is stale: `38621fa` (2026-09-02)
-casts `Wi`/`Wo` to bf16 at load and `moe.py` casts activations in and back out,
-`_force_cutlass_moe_backend` is gone, so sonicmoe checkpoints evaluate on the
-sonicmoe path.
+**Submit MoE arms ungated.** `tools/trace_gate.py` cancelled a healthy MoE smoke
+and blacklisted four innocent nodes; its threshold assumes constant parameter
+count and does not transfer at 3.13B. Recalibrating it to fit one run is the
+post-hoc tuning this document exists to prevent. See
+[findings.md](findings.md#the-trace-gates-threshold-does-not-transfer-to-moe).
 
-**Canon layers** at **kernel size 7** (team decision, from the earlier kernel
-benchmarks), sweeping `canon_layers_mode` x `canon_layer_set`. rmsnorm in the
-base retires the Triton-fallback handicap that prerequisite P7 flagged, so these
-arms now run on the CuTe path they were designed for.
+### LR
+
+MoE gets its own sweep: 2e-2 was tuned on dense, and the router's gradients and
+the load-balance loss have no claim on transferring. Fixed-step `max_steps:
+5000`, the same length as the dense re-sweep, on `g4-S12`, which is jul30's
+winning shape and the fastest cell:
+
+| arm | LR |
+|---|---|
+| `t2b-moelr-1e-2` | 1e-2 |
+| `t2b-moelr-1.41e-2` | 1.41e-2 |
+| `t2b-moelr-2e-2` | 2e-2 (the dense pick) |
+| `t2b-moelr-2.83e-2` | 2.83e-2 |
+
+Launched 2026-09-13 as jobs 1773336-1773339. The standing edge rule applies: if
+the winner lands at 1e-2 or 2.83e-2, extend the grid before building on it.
+
+Then a **2-arm transfer check on `g7-S12`** at the g4 winner and its higher
+neighbour, because top_k 3 against top_k 6 changes the router's gradient
+statistics and there is no argument that one LR serves both. Sparsity is assumed
+not to move the LR (same active width, same top_k); that assumption is untested
+and is recorded here as such.
+
+### Budget
+
+At the smoke's measured 2714 ms/step for g7-S12 (38.4% MFU, +35% over the dense
+base's ~2010 ms), a 6.5 h arm reaches ~8600 steps against dense's ~11600. The
+four grid arms are wall-clock matched at 6.5 h against a 7 h allocation.
+
+**Canon** at kernel size 7 (the only size with CuTe backward kernels and the one
+the perf work targeted), sweeping `canon_layers_mode` x `canon_layer_set`.
+rmsnorm in the base retires the Triton-fallback handicap that prerequisite P7
+flagged, so these arms now run on the CuTe path they were designed for.
 
 ## Tier 2c: our own ideas (24 short + 8 long)
 
