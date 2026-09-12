@@ -390,6 +390,54 @@ and profiles as one CUTLASS sm9x grouped kernel per call with zero Memcpy DtoH.
 It beats our JIT-built cutlass extension by 7 to 11% with no dependency and no
 multi-rank build race.
 
+### Expert width does not matter, top_k does
+One GH200, one MoE routed-expert path, fwd+bwd, eager, bf16, sonicmoe backend,
+65536 tokens (same setup as the table above). Active MLP width is
+`(top_k + 1) x intermediate_size`; dense is 2688, so every row except 512 is an
+exact active-parameter match.
+
+| active | top_k | inter | E (S8) | ms S8 | E (S12) | ms S12 | 128-aligned |
+|---|---|---|---|---|---|---|---|
+| 3 | 2 | 896 | 23 | 12.46 | 35 | 12.66 | yes |
+| 4 | 3 | 672 | 31 | **12.35** | 47 | **12.56** | no |
+| 5 | 4 | 512 | 39 | 11.88 | 59 | 12.28 | yes |
+| 7 | 6 | 384 | 55 | 12.61 | 83 | 13.16 | yes |
+| 8 | 7 | 336 | 63 | 13.40 | 95 | 14.02 | no |
+
+Two results.
+
+**128-byte alignment of the expert width predicts nothing.** 672 is not a
+multiple of 128 and ties the aligned 896, and beats the aligned 384. Every
+width builds and runs on sonicmoe, 336 and 672 included, so there is no
+legality constraint either. (The cutlass probe in the same script died on
+missing CUTLASS headers while the sonicmoe probe ran, which incidentally proves
+sonicmoe was not silently falling back.)
+
+**`top_k` predicts it, monotonically, at both sparsities.** Going 2 -> 7 active
+routed experts costs 7.5% at S8 and 10.8% at S12 at constant active FLOPs. That
+is dispatch and combine traffic scaling with token replication, the same
+mechanism that makes sonicmoe win in the first place: the fused gather/scatter
+is cheaper than materializing the dispatch buffer, but it is not free, and it
+grows with `top_k`.
+
+The 336 penalty is token-count dependent: +1.8% over 672 at 8192 tokens,
++8.5% at 65536. Training runs more tokens per GPU than that, so treat 8.5% as a
+lower bound.
+
+`inter 512` at top_k 4 is dominated. It is the only row that is not an exact
+active match (2560, -4.76%), and per active FLOP it is 1.0% slower than 672 at
+S8 and 2.7% slower at S12. It buys nothing.
+
+One knock-on: sonicmoe's fused top-k kernel is gated on `E <= 4096 and K <= 16
+and E % 8 == 0` (`sonicmoe/functional/forward.py`). Every cell in the grid has
+odd E (shared expert makes it `S*(top_k+1) - 1`), so all of them take the torch
+`topk` fallback. It is a router-sized op on (T, E) and did not show up as a
+difference between cells, so this is a note, not a problem.
+
+Per-layer parameter counts read off the instantiated module put the S8 cells at
+2.25B total and S12 at 3.31B, against plan.md's 2.13B/3.12B. The plan's column
+was computed from a formula and is about 5% low; regenerate it from the model.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
