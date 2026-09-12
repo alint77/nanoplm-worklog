@@ -420,9 +420,21 @@ mechanism that makes sonicmoe win in the first place: the fused gather/scatter
 is cheaper than materializing the dispatch buffer, but it is not free, and it
 grows with `top_k`.
 
-The 336 penalty is token-count dependent: +1.8% over 672 at 8192 tokens,
-+8.5% at 65536. Training runs more tokens per GPU than that, so treat 8.5% as a
-lower bound.
+65536 tokens is exactly the training micro-step: `max_seq_len` is 512 and
+`micro_batch_seqs` is 128, so each GPU sees 128 x 512 = 65536 tokens per
+micro-step and `global_batch_tokens: 4194304` over 16 GPUs comes out as
+`grad_accum = 4`. The table above is therefore at the shape that actually runs,
+not a proxy for it.
+
+The penalty is strongly token-count dependent, which is why that matters:
+336 is only +1.8% over 672 at 8192 tokens, +8.5% at 65536, and at 262144 (a
+full optimizer step's worth, which no single forward ever sees) the ordering
+holds but every MoE cell catches or passes an *eager* dense MLP: dense 49.37 ms,
+g4-S8 46.54, g4-S12 46.97, g7-S8 47.98, g7-S12 49.31, g8-S8 51.02. Do not read
+that last row as "MoE is faster than dense": the dense reference there is an
+uncompiled `ModernBertSwiGLUMLP` that materializes its intermediates, and
+training compiles the model. It is a valid comparison *between* MoE cells, which
+were all measured the same way, and nothing more.
 
 `inter 512` at top_k 4 is dominated. It is the only row that is not an exact
 active match (2560, -4.76%), and per active FLOP it is 1.0% slower than 672 at
@@ -437,6 +449,45 @@ difference between cells, so this is a note, not a problem.
 Per-layer parameter counts read off the instantiated module put the S8 cells at
 2.25B total and S12 at 3.31B, against plan.md's 2.13B/3.12B. The plan's column
 was computed from a formula and is about 5% low; regenerate it from the model.
+
+### MoE uses *less* activation memory than dense, so micro_batch_seqs 128 holds
+The worry was that MoE would OOM at `micro_batch_seqs: 128` and force 64. It
+does not, and the reason is the same fusion that makes sonicmoe fast. Activation
+bytes kept for backward, one MLP or MoE layer, 65536 tokens, bf16, measured on
+one GH200:
+
+| layer | saved for bwd | x32 layers | routed weights bf16, x32 |
+|---|---|---|---|
+| dense inter 2688 | 1.47 GB | 47.00 GB | 0.53 GB |
+| g4-S8  (k=3, 672) | 0.97 GB | 30.93 GB | 3.94 GB |
+| g4-S12 (k=3, 672) | 0.98 GB | 31.21 GB | 5.91 GB |
+| g7-S8  (k=6, 384) | 0.91 GB | 29.25 GB | 3.94 GB |
+| g7-S12 (k=6, 384) | 0.93 GB | 29.69 GB | 5.91 GB |
+| g8-S8  (k=7, 336) | 0.91 GB | 29.07 GB | 3.94 GB |
+| g8-S12 (k=7, 336) | 0.92 GB | 29.54 GB | 5.91 GB |
+
+A dense SwiGLU MLP saves its (T, 2 x 2688) preactivation. sonicmoe fuses
+up/act/down and never materializes the equivalent, so it saves about a third
+less despite the same active width. Across 32 layers that is 16-18 GB *back*.
+
+Against that, MoE adds unsharded weight bytes. `fsdp_reshard_after_forward` is
+`false`, so every layer's parameters stay materialized between forward and
+backward: +5.4 GB at S12 over dense. Optimizer state is sharded, and at 3.31B
+over 16 GPUs is 207M params/GPU, roughly +2.2 GB over dense under NorMuon's
+three fp32 buffers. Call it +7.6 GB of state against -17 GB of activations.
+
+MoE at S12 should therefore sit *below* the dense baseline in peak memory, and
+the dense baseline already runs at 128. Confirm in the smoke run rather than
+trusting the arithmetic; if it does OOM, the uniform fallback is
+`micro_batch_seqs: 64` (grad_accum 4 -> 8) applied to all four cells, not
+activation checkpointing, which would change compute per step.
+
+One caveat on the numbers above: transient peak within a MoE forward is higher
+than the saved figure (1.7-2.5 GB vs ~0.95), but it is one layer at a time, so
+it adds once to the 32-layer total rather than scaling with it. The bs64 peak
+column in that run was allocator-contaminated by the bs128 pass that preceded
+it and should be ignored; the `saved` column halved cleanly and is the one the
+extrapolation uses.
 
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
