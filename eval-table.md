@@ -1,4 +1,34 @@
 # Downstream results, every arm
+## The battery, as of 2026-09-12
+
+Every arm from here on is scored on four frameworks in one pass
+(`slurm/sbatch_eval.sh`, dev mode, on the upstream-synced eval tree):
+
+| framework | what it gives | status |
+|---|---|---|
+| `pgym` | ProteinGym total Spearman (signed, 86 assays in dev) | |
+| `pbc_zeroshot_contact` | contact from the categorical Jacobian | diagnostic only |
+| `pbc_supervised_contact` | contact from a probe on attention maps | **deciding** |
+| `pbc_supervised` | secondary structure incl. **newPISCES364**, and `scl` | |
+
+`pbc_supervised` is restricted to `secondary_structure` and `scl` via
+biotrainer's `task_filter`, which restricts the embedding as well as the
+training: the full seven heads cost ~13 min of embedding and ~30 GB of
+per-residue embeddings per arm. `--pbc-supervised-dataset all` overrides it.
+
+New columns in `collect_results.py`: `sup_sel_long_P@L`,
+`sup_casp14_long_P@L`, `newPISCES364_acc`, `scl_acc`. Zero-shot contact columns
+are kept rather than dropped so the two readouts stay comparable, which matters
+because they disagree on the modernized base.
+
+First numbers, arm B (the new base) at step 10500, dev mode:
+
+| metric | value |
+|---|---|
+| newPISCES364 accuracy (3-state) | 0.8032 |
+| casp13 / casp12 / casp14 accuracy | 0.8342 / 0.7573 / 0.7457 |
+| scl balanced accuracy (test) | 0.5655 |
+
 
 Contact scores are **development-mode aggregation** (the subsets biotrainer
 picks: casp14 38, casp15 38, selected_protein 71), because that is what the
