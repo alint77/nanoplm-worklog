@@ -276,8 +276,34 @@ which is the headline comparison against stock ModernBERT, gets an LR up to one
 grid step below optimal, which would understate the modernization. Reopening it
 costs one 2h45 sweep arm at 4e-2 plus a rerun of the long run.
 
-**2026-09-12: the deciding metric is ambiguous now that both contact readouts
-run.** The pre-registration named zero-shot long P@L on `selected_protein` as
+**2026-09-12: supervised contact is the deciding contact readout.** Team call,
+resolving the ambiguity logged below. It is the better-supported choice on the
+evidence: on the same checkpoints the supervised readout produced a smooth
+monotone curve across the rope ladder (Spearman 0.900 against log M, zig-zag
+0.0007) while the zero-shot Jacobian zig-zagged 0.0112, sixteen times as much,
+and the Jacobian is also the readout that came apart from the probe by 0.0485 on
+the modernized base.
+
+Two consequences to carry into the writeup. **The modernization now reads as a
+win**: supervised contact is +0.0371 on stock ModernBERT where zero-shot was
+-0.0161, so the adopted rms+swiglu+qknorm base is better on the deciding metric,
+better on loss and better on PGYM, and worse only on the readout no longer
+deciding. **And every decision taken before today rests on the old decider** --
+the masking rate, the masking split and the Tier 1 optimizer and batch
+conclusions were all read on zero-shot long P@L. They are not being re-derived;
+anyone re-reading them should know which metric was in force.
+
+**2026-09-12: QK norm is not being tested.** Team call. The Jacobian regression
+on the modernized base therefore stands unexplained: parameter-free
+`F.rms_norm(q, (head_dim,))` caps attention logits at `+-sqrt(head_dim)`, which
+remains the leading hypothesis with no arm behind it. Cost of leaving it: the
+paper cannot say why the two contact readouts diverge on this architecture, and
+the candidate fix (a learnable per-head scale, as in OLMo-2 and ViT-22B) is
+untried. Cheap to revisit later, one arm of `base-modern15` with
+`use_qk_norm: false`.
+
+**2026-09-12: the deciding metric was ambiguous once both contact readouts
+ran.** The pre-registration named zero-shot long P@L on `selected_protein` as
 deciding, and it was chosen when supervised contact could not run at all. On the
 modernized base the two readouts disagree in opposite directions, past 5 sigma
 each ([findings.md](findings.md#the-modernized-base-decouples-the-two-contact-readouts)).
