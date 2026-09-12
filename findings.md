@@ -466,9 +466,15 @@ odd E (shared expert makes it `S*(top_k+1) - 1`), so all of them take the torch
 `topk` fallback. It is a router-sized op on (T, E) and did not show up as a
 difference between cells, so this is a note, not a problem.
 
-Per-layer parameter counts read off the instantiated module put the S8 cells at
-2.25B total and S12 at 3.31B, against plan.md's 2.13B/3.12B. The plan's column
-was computed from a formula and is about 5% low; regenerate it from the model.
+A note on the total-parameter column, since I briefly got this wrong: counting
+with `moe_leading_dense_layers: 0` gives 2.25B/3.31B against plan.md's
+2.13B/3.12B, which looks like a 5% error in the plan. It is not. The plan
+assumed two leading dense layers, and at the adopted
+`moe_leading_dense_layers: 2` the instantiated model counts 2.135B and 3.126B,
+matching it. The two dense layers are built at
+`moe_dense_intermediate_size = (top_k + 1) * intermediate_size`
+(`modeling.py:959`), which is 2688 in both cells, so they are exactly base
+MLPs and active width stays matched across every layer.
 
 ### MoE uses *less* activation memory than dense, so micro_batch_seqs 128 holds
 The worry was that MoE would OOM at `micro_batch_seqs: 128` and force 64. It
