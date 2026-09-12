@@ -798,3 +798,55 @@ the local change recovers 0.0023 (F 2.1772 -> D 2.1749). Small but consistent in
 sign, and it is the thing the original single-knob A7 arm would have measured as
 "theta does not help" for the wrong reason. On the downstream readouts the local
 effect has no consistent sign, so loss is the only place it resolves.
+
+## The sliding window buys ~1% of step time, and a 3.6% step-time gap was the network
+
+All-global attention (`attn_layer_pattern: F`, 32 full layers) first measured
+3.6% slower per step than the FSS base (2.015 vs 1.944 s/step), which would have
+been charged to it under wall-clock matching. Comparing its profiler trace
+against arm B's shows that is not what happened. Both traces carry an identical
+49429 kernel launches, so they are directly comparable:
+
+| category | FSS (arm B) | all-global | delta |
+|---|---|---|---|
+| gemm | 8.173 s | 8.106 s | -0.8% |
+| norm | 1.598 s | 1.613 s | +0.9% |
+| other | 1.419 s | 1.426 s | +0.5% |
+| elementwise | 0.259 s | 0.257 s | -0.8% |
+| attention | 1.849 s | 1.990 s | **+7.6%** |
+| comm | 1.424 s | 3.255 s | **+129%** |
+
+The gate's own per-run numbers say the same: compute 13212 -> 13300 ms
+(**+0.67%**, inside noise) while nccl goes 1424 -> 3255 ms and exposed 135 ->
+392 ms. **All-global cannot change communication** -- same parameters, same FSDP
+sharding, same gradient volume -- so the comm term is the node draw, and the
+gate's exclude list had grown by eight nodes between the two submissions. Both
+runs passed the gate (1.0% and 2.9% exposed/compute against an 8% threshold),
+which is the point: the gate catches exposed stalls, not a network that is
+uniformly slower but still overlapped.
+
+**Two things follow.**
+
+**The alternating local/global pattern is not earning its place on compute.** On
+FLOPs, 21 of 32 layers at window +-64 instead of full 512 should save about half
+the attention cost. Measured, it saves 7.6% of attention, which is ~20 ms/step,
+under 1% of a step. At sequence length 512 and head_dim 64 these FA3 kernels are
+not FLOP-bound, so the window removes work the kernel was not spending time on.
+The kernel counts confirm the structure rather than a measurement artifact: FSS
+splits attention across two kernel variants (601+315 backward, 588+308 forward,
+windowed and not) where all-global uses one (916 backward, 896 forward), the
+same total number of attention calls.
+
+**So all-global belongs in a fixed-step comparison, and the arm was relaunched
+as one.** The matching rule's test is whether compute per step changes; it
+changes by 0.67%, inside noise. Under wall-clock matching the arm was being
+charged ~2.5-3% of step time for a network draw, which is exactly the
+node-speed-into-downstream leakage this series measured at r=0.89 and wrote the
+fixed-step rule to avoid. Relaunched at `max_steps: 10500` against arm B's
+10500, with `max_wallclock_hours: 6.5` as a crash guard only. The first
+submission (job 1766458) was cancelled an hour in.
+
+Method note for later arms: *predicted* compute neutrality is not the test, and
+neither is measured step time on one node draw. The trace decides, and the
+category breakdown separates "this arm costs more" from "this node is slower" in
+a way total step time cannot.

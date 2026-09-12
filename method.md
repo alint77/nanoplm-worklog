@@ -32,6 +32,17 @@ the training masking are still scored on the same task.
   is **fixed-step**: `max_steps: N`, with `max_wallclock_hours` left as a safety
   net only.
 
+**Classifying an arm: use the trace, not the step time.** Whether an arm
+changes compute per step decides its matching protocol, and total step time
+answers that question wrongly whenever the node draw differs. All-global
+attention measured 3.6% slower per step and was 0.67% slower in compute; the
+rest was a network draw the gate passed as healthy because the extra NCCL time
+stayed overlapped
+([findings.md](findings.md#the-sliding-window-buys-1-of-step-time-and-a-36-step-time-gap-was-the-network)).
+Compare the profiler traces by kernel category: an arm that genuinely costs more
+moves its own category while gemm, norm and elementwise stay put, and a slower
+node moves everything or moves comm alone.
+
 **What that safety net is for, and how to set it.** On a fixed-step arm the
 wall-clock stop does no matching work, so it is tempting to push it out of the
 way. Do not: `slurm/sbatch_run.sh` has no `--signal` and the pipeline installs
