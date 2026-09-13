@@ -760,6 +760,64 @@ siblings. Relaunched identical (job 1777903) rather than break matching. If it
 fails twice, the event is systematic rather than a fluke and all four arms
 should be redone against a fixed kernel.
 
+### MoE eval is 96% quack autotuning, and almost all of it is waste
+The first MoE eval (`t2b-moe-g4-S12`, job 1782359) ran over 75 minutes without
+finishing, against ~18 min per checkpoint for the dense arms. Sampled the live
+process with py-spy: **24 of 25 stacks were inside `quack/autotuner.py`**, under
+`check_disk_cache -> benchmark -> _bench_cuda_graph_l2_rotate`. Not model
+forward, not the probe training. Kernel autotuning.
+
+Three compounding causes.
+
+**1. The eval launcher never set the quack cache location.** `sbatch_run.sh`
+exports `QUACK_HOME` and `QUACK_CACHE_DIR` into `$FSROOT/cache/quack`, which has
+7,203 entries the training runs paid for. `sbatch_eval.sh` exported neither, so
+`default_cache_dir()` (`quack/autotuner.py:64`) fell back to
+`Path.home()/.quack/cache`. That puts run artifacts off fscratch, against the
+standing rule, and throws away every entry training had already computed.
+Fixed: the two exports added to `sbatch_eval.sh`.
+
+**2. The autotune key contains every tensor's shape.** `autotuner.py:613-620`
+builds the key from the tuning keys plus `str(arg.shape)` for each tensor
+argument, so the token count `M` is part of it. Eval batches variable-length
+proteins under `dynamic=True`, so nearly every batch is a new key and a fresh
+autotune. The cache does not converge: new entries arrived at 13 per 120 s at
+69 min and 15 per 120 s at 73 min, still climbing.
+
+**3. Autotuning buys nothing here anyway.** Measured on one GH200, the real
+`MoELayer` sonicmoe path at E=47/top_k 3/inter 672, cold cache, five distinct
+token counts:
+
+| new shape | `tuned=True` | `tuned=False` |
+|---|---|---|
+| M=3137 (first, includes CuTe compile) | 65.7 s | 7.7 s |
+| M=5211 | 10.9 s | 0.007 s |
+| M=7307 | 11.0 s | 0.005 s |
+| M=9401 | 11.5 s | 0.006 s |
+| M=11503 | 11.5 s | 0.006 s |
+| **total** | **110.5 s** | **7.8 s** |
+
+Roughly 11 s per new shape, against 6 ms untuned. And the tuned kernel is not
+faster in steady state: repeat-call latency was 2.48-3.26 ms tuned against
+1.61-2.76 ms untuned. That comparison is single-sample at millisecond scale so
+it does not establish that untuned is *faster*; what it does establish is that
+there is no measurable win to pay 11 s a shape for.
+
+`quack.gemm_interface.gemm_out` and friends take `tuned: bool = True`, and
+`tuned=False` routes to `partial(gemm_tuned.fn, config=None)`, skipping the
+search. sonicmoe calls `gemm_gated` etc. without passing it
+(`sonicmoe/functional/__init__.py:109`), so there is no env knob; forcing it off
+for eval needs a wrapper around the four `quack.gemm_interface` entry points.
+
+**This is MoE-only.** Dense checkpoints never call a quack GEMM, which is why
+every eval before this one was fast and why the problem appeared the moment the
+first MoE checkpoint was scored.
+
+Ranked fixes: force `tuned=False` in the eval path (removes ~11 s per shape,
+no measured throughput cost); the cache-location fix, now landed, which mostly
+helps the second and later arms; and bucketing eval batches to fixed token
+counts, which would make the cache actually hit but is the most invasive.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
