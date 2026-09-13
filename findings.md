@@ -705,6 +705,61 @@ CUDA graphs are the obvious answer to a host-bound step and are already ruled
 out here: per-block compile with `reduce-overhead` was a 10x regression under
 FSDP2 and is not to be re-attempted.
 
+### An all-NaN router row becomes an out-of-bounds index, and kills the job
+`t2b-moe-g7-S12` (job 1774447) died at step ~5790 after 4 h 33 m of healthy
+training: dt flat at 2776 ms, loss descending, `moe_dead=0`, `grad_norm=0.11`
+at the last log 10 steps earlier. All 16 ranks aborted with SIGABRT via the
+NCCL watchdog, which reads like a network fault and is not one.
+
+The real error is a device-side assert in an inductor kernel:
+
+    Assertion `index out of bounds: 0 <= tmp4 < 83` failed.
+
+83 is `moe_num_experts`. A router top-k index came back equal to the expert
+count. `_router_topk_kernel` (`moe.py:164`) picks the winning column with
+
+    idx = tl.min(tl.where(eq, cols[None, :], E_), axis=1)
+
+where `eq` is `x == m[:, None]`. `E_` is the "no column matched" sentinel and
+`E_` *is* `num_experts`, so whenever no column compares equal to the row max the
+kernel writes exactly the first out-of-bounds index, unguarded. The downstream
+`logits.gather(-1, indices)` then asserts and takes the device down.
+
+Reproduced on one GH200 at E=83, top_k 6:
+
+| row content | result |
+|---|---|
+| normal | in bounds |
+| one NaN among 83 | in bounds (Triton's `tl.max` skips NaN) |
+| entirely +inf | in bounds |
+| **entirely NaN** | **all six indices = 83, out of bounds** |
+
+A single NaN is survivable; an entire NaN row is not. That is the diagnostic
+detail, because `raw_logits = F.linear(x, w)` makes a whole row NaN exactly when
+one token's *hidden state* carries a NaN: the dot product against all 83 expert
+rows is NaN together. So the true event was one NaN hidden state, and the router
+kernel converted a recoverable numerical event into an unrecoverable crash with
+a misleading NCCL traceback.
+
+Two separate defects:
+
+1. **The sentinel is unsafe.** `E_` should not double as "not found" when the
+   result is used as an index. Any NaN reaching the router is a hard abort.
+2. **Something produced a NaN hidden state** at ~step 5790 under a configuration
+   whose three sister arms, same LR, same optimizer, ran to completion. Origin
+   not established. Could be a rare numerical edge or a transient fault.
+
+**Operationally: MoE arms have no crash recovery.** `save_steps` is 100000 and
+the wall-clock stop is what writes the checkpoint, so a mid-run abort loses
+everything. This one cost 4 h 33 m and produced no artifact. The obvious
+mitigation, periodic saves, is not free: the wall-clock budget is
+`time.perf_counter() - wallclock_t0` (`pure_pipeline.py:3477`) and does **not**
+pause for checkpointing, so intermediate saves of a 24 GB checkpoint come
+straight out of the matched 6.5 h and would handicap that arm against its
+siblings. Relaunched identical (job 1777903) rather than break matching. If it
+fails twice, the event is systematic rather than a fluke and all four arms
+should be redone against a fixed kernel.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
