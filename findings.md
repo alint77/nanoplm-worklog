@@ -813,10 +813,31 @@ for eval needs a wrapper around the four `quack.gemm_interface` entry points.
 every eval before this one was fast and why the problem appeared the moment the
 first MoE checkpoint was scored.
 
-Ranked fixes: force `tuned=False` in the eval path (removes ~11 s per shape,
-no measured throughput cost); the cache-location fix, now landed, which mostly
-helps the second and later arms; and bucketing eval batches to fixed token
-counts, which would make the cache actually hit but is the most invasive.
+**Fixed, and verified.** Two changes landed:
+
+- `slurm/sbatch_eval.sh` now exports `QUACK_HOME` and `QUACK_CACHE_DIR` into
+  `$FSROOT/cache/quack`, the same cache training uses.
+- `eval/nanoplm-src-sync/src/nanoplm/eval/_quack_untuned.py` (new) rebinds the
+  four `quack.gemm_interface` entry points to pass `tuned=False`, and rebinds
+  them in `sonicmoe.functional` too, which binds them by value at import.
+  `cli/eval.py` calls it at the top of `run()`, before the model is built.
+  `NANOPLM_EVAL_QUACK_TUNED=1` restores the autotuner. The module lives in the
+  eval-only tree; the frozen training tree is untouched and training still
+  autotunes, which is correct there since it sees a small fixed set of shapes.
+
+Re-ran as job 1782946. py-spy: **0 of 12 stacks in the autotuner**, against 24
+of 25 before, and the fscratch quack cache stayed at 7,203 entries, so nothing
+is being tuned at all.
+
+Still open, and not needed now: bucketing eval batches to fixed token counts
+would make the cache hit rather than be bypassed. Only worth it if a future eval
+path wants tuned kernels.
+
+One numerical note. `tuned=False` selects a fixed kernel config instead of a
+per-shape one, so bf16 reduction order differs from a tuned run. Nothing already
+scored is affected: dense checkpoints never call a quack GEMM, and no MoE
+checkpoint had been scored before this. Every MoE arm will be evaluated under
+the same setting.
 
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
