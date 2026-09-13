@@ -629,6 +629,82 @@ dominated by the 3.13B of weights and optimizer state, not by the dispatch
 buffers, so **both S12 cells are near the edge and the S8 cells should have
 room**. Router health held all the way: 0 dead experts, entropy 0.971-0.981.
 
+### Where the MoE step actually goes, and what is wasted
+Profiler traces for all four grid arms against the dense `t2a-glob` control.
+`compute` is the union of non-NCCL kernel intervals (a GPU measurement, robust
+to profiler overhead); `overhead` is steady-state `dt` minus that.
+
+| arm | dt (steady) | MFU | compute | overhead | overhead % |
+|---|---|---|---|---|---|
+| dense t2a-glob | 2000 ms | 54.0% | 1923 ms | 77 ms | **3.9%** |
+| g4-S8 | 2471 ms | 42.0% | 2222 ms | 249 ms | 10.1% |
+| g4-S12 | 2639 ms | 39.4% | 2269 ms | 370 ms | **14.0%** |
+| g7-S8 | 2579 ms | 40.3% | 2306 ms | 273 ms | 10.6% |
+| g7-S12 | 2776 ms | 37.6% | 2475 ms | 301 ms | 10.8% |
+
+So MoE loses on two fronts, and the second one is not about MoE. Compute rises
+16-29% over dense despite active parameters being matched, and overhead rises
+from 3.9% to 10-14%.
+
+Serial kernel time by category, g4-S12 (per step, 7 profiled steps):
+
+| category | ms/step | % | launches/step |
+|---|---|---|---|
+| comm: allgather (FSDP params) | 660.2 | 20.8% | 288 |
+| gemm: dense (attn proj, head, 2 dense layers) | 644.9 | 20.4% | 4061 |
+| moe: expert GEMM down/bwd | 470.7 | 14.9% | 960 |
+| norm (triton fused) | 260.9 | 8.2% | 2718 |
+| attention (FA3) | 245.2 | 7.7% | 1280 |
+| comm: reducescatter (grads, **fp32**) | 217.6 | 6.9% | 36 |
+| moe: expert GEMM up+act | 157.1 | 5.0% | 240 |
+| elementwise/copy | 140.9 | 4.5% | **9000** |
+| moe: expert GEMM bwd (dact) | 119.8 | 3.8% | 240 |
+| moe: router combine + routing/sort | 52.1 | 1.6% | 1440 |
+| optimizer | 16.8 | 0.5% | 592 |
+
+**The expert GEMMs are not the problem.** They are 748 ms/step at g4-S12 and
+950 at g7-S12, and they are the useful work. sonicmoe is doing its job.
+
+**Comm is 28% of all kernel time**, against 25% for dense on a model an eighth
+the size. Two specific findings:
+
+*The reduce-scatter runs in fp32.* `fsdp_reduce_dtype: fp32` costs 218 ms/step
+of gradient comm at double the bytes bf16 would need. Roughly 110 ms/step, about
+4% of step time, is recoverable. It is a numerics change, so not adoptable
+mid-series, but it should be on the list afterwards.
+
+*`micro_batch_seqs: 64` doubles the all-gather traffic.* Allgather launches per
+**micro**-step are 36 in both dense (144 over grad_accum 4) and MoE (288 over
+grad_accum 8), so FSDP re-gathers the whole model once per micro-step rather
+than once per optimizer step, even with `reshard_after_forward: false`. Halving
+the micro-batch to fit memory therefore doubled the parameter all-gather. This
+is a direct, quantified cost of the OOM workaround, not of MoE.
+
+**The idle is host-dispatch bound.** MoE issues 27,470 kernel launches per step
+against dense's 7,057, 3.9x, of which grad_accum explains only 2x. The
+elementwise/copy count is the worst offender at 9,000 launches for 141 ms, an
+average of 15.7 us per kernel, against dense's 1,684 for 22 ms. Two independent
+signatures confirm the diagnosis: the arm with the most GPU work per step
+(g7-S12) has the *least* idle (6.3% against g4-S8's 13.8%), which is what a
+fixed host cost being amortized looks like; and profiling itself, which adds
+per-launch CPU work, slows the MoE arms 19% but dense only 2.3%.
+
+**Caveat on the idle numbers.** The per-step idle read directly off the trace
+(187-406 ms) is inflated by that same profiler CPU overhead, which is why the
+table above derives overhead from steady-state `dt` minus measured compute
+instead. The inflation is evidence for the diagnosis, not a number to quote.
+
+**None of this biases the grid.** All four cells carry the same bs64, the same
+grad_accum, and the same fp32 reduce dtype, so the within-grid comparison is
+clean. It does matter for reading MoE against the dense control: part of the
+wall-clock penalty MoE is being charged under wall-clock matching is the bs64
+workaround rather than MoE itself. Worth stating in the paper rather than
+quietly letting MoE wear it.
+
+CUDA graphs are the obvious answer to a host-bound step and are already ruled
+out here: per-block compile with `reduce-overhead` was a 10x regression under
+FSDP2 and is not to be re-attempted.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
