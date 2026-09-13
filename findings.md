@@ -590,6 +590,45 @@ sonicmoe, 4 nodes, job 1773043:
 - Active parameters per token 402.19M against the dense base's 399.6M. The
   +2.6M is exactly the routers (30 layers x 1024 x 83) and is unavoidable.
 
+### MoE's LR response is flat: the dense 2e-2 transfers
+The worry was that 2e-2, tuned on the dense base, had no claim on transferring
+to MoE, because the router's gradients and the load-balance loss are new. Four
+fixed-step arms on `g4-S12` (E=47, top_k 3, inter 672, bs64), 5000 steps, jobs
+1773336-1773339:
+
+| LR | eval loss @5000 |
+|---|---|
+| 1e-2 | 2.1948 |
+| 1.41e-2 | **2.1927** |
+| 2e-2 | **2.1927** |
+| 2.83e-2 | 2.1936 |
+
+The spread across a 2.83x range of LR is 0.0021, against a 2 sigma eval-loss
+floor of 0.0019. The whole sweep is one point. All four arms ran exactly 5000
+steps, so no step-spread correction applies.
+
+**Adopted 2e-2**, which ties for best. 1.41e-2 ties it exactly and the standing
+"pick the lower one within noise" rule would favour it, but two things outweigh
+that here: the dense control runs at 2e-2, so matching it keeps the MoE-vs-dense
+comparison free of an LR confound, and loss is a poor instrument for this choice
+anyway (across 38 arms it explains 5.6% of the variance in the deciding metric).
+Resolving a 0.0000 loss tie on loss would be reading noise.
+
+The winner is not at an edge (1e-2 is worst, 2.83e-2 is mid), so the
+extend-the-grid rule does not fire and the bracket is adequate.
+
+**Consequence for the plan: the g7-S12 transfer check is probably not worth two
+arms.** A response this flat over 2.83x suggests the optimum is broad. It does
+not prove the same for top_k 6, which is a different router regime, so this is a
+judgment call rather than a measurement, and it is recorded as one.
+
+Incidental: g4-S12 runs at 2588-2660 ms/step and 39.1-40.2% MFU, slightly better
+than g7-S12's 2714 ms and 38.4%. Peak VRAM is 69,580 of 71,336 MB, 97.5%, which
+is the same fraction as g7-S12 despite top_k being half. Memory at bs64 is
+dominated by the 3.13B of weights and optimizer state, not by the dispatch
+buffers, so **both S12 cells are near the edge and the S8 cells should have
+room**. Router health held all the way: 0 dead experts, entropy 0.971-0.981.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
