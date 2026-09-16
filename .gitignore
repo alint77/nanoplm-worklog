@@ -1,0 +1,5 @@
+# Core dumps. A 47.6 MB one (core.jpbl-s02-02.373318) was committed in
+# 3b1b814 and reached origin; it compresses to almost nothing so the packed
+# repo stayed small, but every clone materialised it in the working tree.
+core.*
+*.core
