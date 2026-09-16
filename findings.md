@@ -741,10 +741,28 @@ rows is NaN together. So the true event was one NaN hidden state, and the router
 kernel converted a recoverable numerical event into an unrecoverable crash with
 a misleading NCCL traceback.
 
+**Correction (2026-09-17): do NOT "fix" the sentinel by clamping it.** The
+original entry below called the sentinel a defect and proposed making the index
+safe. That is wrong, and it took a second crash to see why. Clamping `E_` to a
+valid index would make the NaN *silent*: the gather would return a
+finite-but-meaningless routing weight, training would continue, and the
+corruption would reach the weights on the very next optimizer step. The
+out-of-bounds assert is the only reason we know this happens at all. The fix is
+detection at the source, not suppression at the symptom.
+
+It also reframes what a completed MoE run means. A NaN in any token's hidden
+state, entering any of the 30 MoE routers, produces an all-NaN row and aborts
+the job in the forward pass, before any optimizer step. So the sentinel is an
+accidental activation-level NaN detector at 30 of 32 layers. **A MoE run that
+finished carries a guarantee no dense run has: no NaN reached any MoE layer
+input at any step.** That, rather than "the checkpoints are finite", is why the
+scored results stand. (Verified anyway: all three saved MoE checkpoints are
+fully finite, max |param| ~4, `correction_bias` bounded at 0.49-0.57.)
+
 Two separate defects:
 
-1. **The sentinel is unsafe.** `E_` should not double as "not found" when the
-   result is used as an index. Any NaN reaching the router is a hard abort.
+1. **The sentinel is unsafe as an index** but load-bearing as an alarm. See the
+   correction above: leave it loud.
 2. **Something produced a NaN hidden state** at ~step 5790 under a configuration
    whose three sister arms, same LR, same optimizer, ran to completion. Origin
    not established. Could be a rare numerical edge or a transient fault.
@@ -756,9 +774,37 @@ mitigation, periodic saves, is not free: the wall-clock budget is
 `time.perf_counter() - wallclock_t0` (`pure_pipeline.py:3477`) and does **not**
 pause for checkpointing, so intermediate saves of a 24 GB checkpoint come
 straight out of the matched 6.5 h and would handicap that arm against its
-siblings. Relaunched identical (job 1777903) rather than break matching. If it
-fails twice, the event is systematic rather than a fluke and all four arms
-should be redone against a fixed kernel.
+siblings. Relaunched identical (job 1777903) rather than break matching.
+
+**It did fail twice** (`t2b-moe-g4-S12-re1`, job 1836251, 2026-09-16, step
+16180 after 5 h 35 m, this time surfacing as
+`ScatterGatherKernel.cu:163 idx_dim >= 0 && idx_dim < index_size` rather than
+the inductor-fused gather). The earlier plan said that would mean redoing all
+four arms against a fixed kernel. It does not, because the "fix" was wrong; see
+the correction at the top of this section.
+
+**The source is MoE-specific, not a cluster property.** The whole series was
+grepped for the pipeline's non-finite-loss skip
+(`"Skipping optimizer step %d due to non-finite loss"`, `pure_pipeline.py:3091`)
+across 280 `.out` and 278 `.err` logs: **zero hits, ever, dense or MoE**. So the
+only NaN evidence in the series is these two router crashes. Exposure:
+
+| | runs | run-hours | NaN events |
+|---|---|---|---|
+| dense | 156 | 392.2 | 0 |
+| MoE | 12 | 46.8 | 2 |
+
+MoE's rate is one per 23.4 run-hours. At that rate dense's 392.2 hours would
+have produced 16.8 events; observing zero has Poisson probability 5.3e-8. The
+caveat worth stating: the two detectors differ. Dense only catches a NaN that
+survives to the loss, MoE catches any NaN entering a router. Attention mixes
+tokens, so a dense activation NaN should still reach the loss, but the
+sensitivities are not identical.
+
+Prime suspect is therefore the sonicmoe/quack path: it is the only MoE-specific
+compute, it is version 0.1.2.post1 from a fork, and it is what dense does not
+run. Not established, and a transient hardware fault is not excluded by this
+data alone.
 
 ### MoE eval is 96% quack autotuning, and almost all of it is waste
 The first MoE eval (`t2b-moe-g4-S12`, job 1782359) ran over 75 minutes without
