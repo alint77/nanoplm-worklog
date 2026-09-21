@@ -779,7 +779,31 @@ siblings. Relaunched identical (job 1777903) rather than break matching.
 **It did fail twice** (`t2b-moe-g4-S12-re1`, job 1836251, 2026-09-16, step
 16180 after 5 h 35 m, this time surfacing as
 `ScatterGatherKernel.cu:163 idx_dim >= 0 && idx_dim < index_size` rather than
-the inductor-fused gather). The earlier plan said that would mean redoing all
+the inductor-fused gather).
+
+**Error ordering, checked properly on 2026-09-22** (it had been asserted rather
+than verified, and the second stderr also carried a flash-attention CUDA error
+and a CUBLAS failure that would mean something quite different if either came
+first):
+
+| | g7-S12 | g4-S12-re1 |
+|---|---|---|
+| first error, line | 136 | 136 |
+| signature | `index out of bounds: 0 <= tmp4 < 83` | `idx_dim >= 0 && idx_dim < index_size` |
+| kernel | inductor-compiled gather | eager ATen ScatterGatherKernel |
+| flash-attention error | line 6028 | line 504 |
+| CUBLAS / watchdog | -- / 10671 | 836 / 1079 |
+
+The gather assert is first in both, with only startup boilerplate before it, and
+the flash-attention and CUBLAS entries appear thousands of lines later and are
+themselves "device-side assert triggered", i.e. downstream of the poisoned
+context. **So the NaN does not originate in attention.**
+
+One difference stays unexplained: the same gather ran compiled in one crash and
+eager in the other, which is why only g7-S12 printed its bound. That is why
+g7-S12 is *proven* to be the router (bound 83 = `moe_num_experts`, gathering
+from the stride-88 padded router logits) while g4-S12-re1 is only consistent
+with it. Tonight's check A settles that by naming the layer directly. The earlier plan said that would mean redoing all
 four arms against a fixed kernel. It does not, because the "fix" was wrong; see
 the correction at the top of this section.
 
