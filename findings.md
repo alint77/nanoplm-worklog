@@ -885,6 +885,60 @@ scored is affected: dense checkpoints never call a quack GEMM, and no MoE
 checkpoint had been scored before this. Every MoE arm will be evaluated under
 the same setting.
 
+### The NaN hunt: six runs launched 2026-09-22
+Two crashes in 46.8 MoE run-hours against zero in 392 dense run-hours is a rare
+event, so the design is parallel exposure plus an instrument that localises the
+source, not one run with more logging.
+
+**Why more `debug_layerwise_metrics` alone would not have answered it.** It was
+already on (`debug_layerwise_log_every: 20`) during both crashes and recorded
+nothing: zero non-finite entries, and activation magnitudes at the last record
+before each crash (1.62e5 for g7-S12, 1.80e5 for g4-S12-re1) matching the clean
+dense run's 1.86e5. Its hooks also sit on block *outputs* while the router sits
+inside the block, so the crashing step never reaches them however often they
+fire. Raising the cadence to 1 still buys something real, though, and is set on
+all six arms: the last record before the g4-S12 crash was step 16180 and it died
+in 16181-16200, so a ramp inside those steps was invisible. Per-step gives the
+approach; the probe gives the crash itself.
+
+**The probe** (`moe_nan_probe.py`, new, guarded by `NANOPLM_MOE_NAN_PROBE=1`, so
+the frozen training tree is bit-identical when off). Two checks per MoE layer:
+
+    check A  router input   -> NaN here means attn/norm/residual upstream
+    check B  expert output  -> NaN here with A clean means the expert kernel
+
+On a trip it dumps the offending tensors (plus `x`, `indices`, `weights` for B),
+the layer index and the rank to `$NANOPLM_MOE_NAN_DUMP_DIR`, then raises naming
+which side tripped. Validated on the login GPU by injecting a NaN into one
+token's hidden state: clean forward does not trip, injected NaN trips check A at
+the right layer and writes the dump.
+
+**The discriminator is the arm split, not the dump.** Three arms on `sonicmoe`
+and three on `cutlass`, all resuming the same `checkpoint-8778`, so the only
+difference is the expert kernel. If only the sonicmoe arms crash, that is the
+answer without reading a byte of the dump. `TORCH_USE_CUDA_DSA=1` on all six so
+a device assert reports its launch site rather than the next sync.
+
+| arm | job | backend |
+|---|---|---|
+| nan-sonic-1 | 1944350 | sonicmoe |
+| nan-sonic-2 | 1944352 | sonicmoe |
+| nan-sonic-3 | 1944354 | sonicmoe |
+| nan-cutlass-1 | 1944351 | cutlass |
+| nan-cutlass-2 | 1944353 | cutlass |
+| nan-cutlass-3 | 1944355 | cutlass |
+
+All six resume `t2b-moe-g4-S12-1774445/checkpoint-8778` (g4-S12, E=47, top_k 3,
+inter 672, bs64, LR 2e-2), 6 h wall-clock each, `checkpoints-nan/<arm>/`,
+dumps in `nan_dumps/<arm>/`. Step time 3.78-3.87 s (sonicmoe) and 4.07-4.16 s
+(cutlass) against 2.64 s for the same arm without the per-step logging, so the
+diagnostics cost about 45%. That is fine here and would not be in a matched arm.
+
+Deliberately NOT varied: `micro_batch_seqs` stays 64 on every arm. Trying 128
+would OOM and confound the comparison.
+
+Prior: at one event per 23.4 run-hours, six 6 h arms give roughly a 75-80%
+chance of at least one crash. A clean sweep is itself informative but weak.
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
