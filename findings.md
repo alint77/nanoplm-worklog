@@ -963,6 +963,56 @@ would OOM and confound the comparison.
 
 Prior: at one event per 23.4 run-hours, six 6 h arms give roughly a 75-80%
 chance of at least one crash. A clean sweep is itself informative but weak.
+### Auditing the six custom MoE Triton kernels: they are not the NaN
+All six were LLM-written, so they were differential-tested against PyTorch
+references on one GH200 rather than read.
+
+| kernel | path | verdict |
+|---|---|---|
+| `_router_topk_kernel` | **shared** | 7 shape combos exact vs `torch.topk` on gathered values; correct lowest-index tie-break on all-equal rows; counts histogram exact |
+| `_moe_gather_kernel` | cutlass | forward bit-exact vs `x[idx]` |
+| `_moe_scatter_add_kernel` | cutlass | indices correct, but bf16 `tl.atomic_add` accumulation |
+| `_moe_gather_combine_fwd` | cutlass | max diff 4.8e-7 |
+| `_moe_gather_combine_bwd_fused` | cutlass | grad_expert exact, grad_weight 4.9e-4 |
+
+**Two suspicions raised on reading and then disproved.** The `tl.float64`
+accumulator branch is only selected when the input genuinely is float64
+(`fp32_accum = dtype != torch.float64`), so it is correct. And
+`_moe_autotune_key` is only used for status printing: Triton's real key is
+`key=["C"]`, and every kernel loops `cdiv(C, BLOCK_D)` under a mask, so any
+block size is valid for any C. There is no stale-config hazard of the kind the
+canon kernels hit.
+
+**The one real defect: bf16 atomic accumulation in the dispatch backward.**
+`grad_x[token_idx[i]] += grad_sorted[i]` accumulates in bf16 where ATen's
+`index_add` accumulates higher. Diagnosed rather than guessed: the error is
+**exactly zero on rows receiving a single contribution** and non-zero only where
+contributions collide, in both fp32 and bf16, which is accumulation order and
+not indexing. Cost at bf16: p99 relative error 3.9%, max absolute 0.125. Fix is
+`torch.index_add_`.
+
+**Extreme-value probe, with a control.** Feeding finite-but-huge values does
+make the combine and dispatch kernels emit non-finite output, but **the PyTorch
+reference goes non-finite on the identical inputs**, so it is arithmetic
+overflow rather than a kernel defect. It needs magnitudes near 3.4e38; the
+largest activation the debug metrics have ever recorded in these runs is 1.9e5,
+a factor of 1.8e33 below.
+
+**What this does and does not license.** It raises confidence in our code and it
+makes `_router_topk_kernel` a victim rather than a source, since it is correct
+given finite input. It does **not** touch the prime suspect: both crashes ran
+`sonicmoe`, whose expert compute is third-party quack/CuTe, untested here. The
+four cutlass-path kernels were never on the crashing path at all.
+
+**Standard replacements**, if the maintenance burden ever outweighs the fusion:
+`index_select` for the gather, `index_add_` for the scatter-add (which also
+fixes the precision), `(eo[inv] * w.unsqueeze(-1)).sum(1)` for the combine with
+autograd supplying both backwards, `torch.topk` + `bincount` for the router (the
+existing fallback already is this), and `torch._grouped_mm` for the whole
+dispatch-plus-expert path, already measured 7-11% faster than the hand-built
+CUTLASS extension with no dependency and no multi-rank JIT race. What the custom
+versions buy: the counts histogram for free, and not materializing `eo[inv]`.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
