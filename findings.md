@@ -1053,6 +1053,81 @@ attention/norm/residual; the bs64 padding path; and a hardware fault. Our own
 six Triton kernels are audited and cleared, and the router top-k in particular
 is a victim rather than a source.
 
+### The NaN caught in the act: it is not sonicmoe, and not padding
+Six diagnostic arms, 2026-09-22. Five completed 6 h clean. **`nan-cutlass-1`
+tripped the probe at step 9799**, 1 h 24 m in.
+
+| arm | result |
+|---|---|
+| nan-sonic-1 / 2 / 3 | COMPLETED 6h11m, step ~14,400 |
+| nan-cutlass-2 / 3 | COMPLETED 6h14m, step ~13,930 |
+| **nan-cutlass-1** | **FAILED, probe trip at step 9799** |
+
+**sonicmoe is exonerated.** Three sonicmoe arms ran 18 h without an event and
+the one that fired was `cutlass`. With the two earlier crashes (both sonicmoe)
+that makes the NaN backend-independent, which retires the hypothesis this hunt
+was designed around. The quack/CuTe kernels are not the cause.
+
+**What the trip says.** Check A fired: the **router input** at **MoE layer 5**,
+on all 16 ranks, with layers 2, 3 and 4 clean in the same forward. So the NaN
+is made upstream of the expert path, in layer 4's MLP, layer 4's attention or
+layer 5's attention. Layer 5 is `sliding_attention`, window 128.
+
+**What the dump says**, and it kills two more hypotheses:
+
+- **33,143,808 of 33,554,432 elements non-finite (98.8%)**. Not one token going
+  bad: essentially the whole activation.
+- **Rows 0-32555 are all NaN; rows 32556-32767 are clean.** The clean tail is
+  the padding segment. So **padding survives and every real token dies**, the
+  exact opposite of the padding hypothesis, which is dead.
+- **Zero infs, all NaN.** Not an overflow path.
+- No ramp: at step 9798 every weight and grad norm is finite and the max weight
+  norm is growing smoothly (2188.7 -> 2189 over the preceding steps).
+
+**The crux, still unexplained.** Whatever did this spared an independent
+`cu_seqlens` segment while destroying every real sequence at once. A single NaN
+token spreading through a 128-wide sliding window reaches its neighbours, not
+32,556 tokens across 64 packed sequences. A NaN weight in any shared operation
+would have taken the padding with it.
+
+### Probe v2: no per-layer syncs, and a finer localisation
+v1 blocked on `bool(isfinite(x).all())` once per layer, 240 syncs per optimizer
+step, about +26% step time. It synced because the check ran before the router
+purely to pre-empt the out-of-bounds assert.
+
+v2 removes the reason rather than the symptom. With the probe on, the router's
+top-k indices are clamped into range (out-of-place: the gather saves them for
+backward), so the assert cannot fire and the forward always completes. Each
+check then writes a verdict into a device tensor with no sync, and the last MoE
+layer calls `finalize()`, which syncs **once per micro-step** and reads every
+verdict at once. Clamping is safe because a tripped probe aborts at the end of
+that same forward, so the garbage it produces never reaches an optimizer step.
+
+It also checks **two** points per layer now, router input and layer output, so a
+trip separates "this block's attention/norm" from "this block's expert path"
+instead of leaving a two-layer window, and it dumps `cu_seqlens` and
+`valid_token_count` for the packing question.
+
+Validated by injection: a clean forward does not trip; a NaN injected into
+layer 5's input reports `FIRST non-finite: router_input at MoE layer 5` plus the
+full propagation chain. Microbenchmark shows +13% on a *one-layer* model where
+the single sync is amortised over one layer instead of thirty; the real-model
+cost projects to roughly 2%.
+
+### Next: the test that separates MoE from bs64
+Every MoE run in this series is bs64 and no dense run has ever been, so the two
+remain perfectly confounded and this is now the load-bearing question. Six arms
+queued (jobs 1950303-1950311), all bs64, all with
+`debug_non_finite_params: true`:
+
+- **3 x dense at bs64**, resuming `checkpoint-21448`. Dense has no `MoELayer` so
+  the probe does not apply, and does not need to: the existing non-finite-loss
+  tripwire logs and skips rather than crashing.
+- **3 x MoE with probe v2**, resuming `checkpoint-8778`.
+
+A trip on a dense arm exonerates MoE entirely and makes this an
+attention/packing bug.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
