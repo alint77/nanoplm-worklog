@@ -1128,6 +1128,59 @@ queued (jobs 1950303-1950311), all bs64, all with
 A trip on a dense arm exonerates MoE entirely and makes this an
 attention/packing bug.
 
+### Probe v2.1 fell back to eager; v2.2 fixes it and makes the NaN survivable
+Two lessons about instrumenting a compiled model, both learned the expensive way.
+
+**v2.0 OOMed.** It held a reference to every layer's router input and output
+for the dump: 30 layers x 2 x 64 MB, ~3.8 GB pinned across the forward, against
+an S12 arm that already runs at ~97.5% of the card. All three MoE arms died on
+startup. v2.1 stored 32 KB per-row masks instead (1.9 MiB total, measured).
+
+**v2.1 ran at +35%, not the ~2% projected.** The projection came from an *eager*
+microbenchmark, which structurally cannot see dynamo recompiles. In training the
+model is compiled whole, and `debug_layerwise_metrics` puts a
+`torch.compiler.disable`d hook on every block, so each MoE layer's forward runs
+as its own frame sharing one code object. v2.1 read per-instance Python ints
+(`_probe_layer_idx`, first/last flags) inside that forward, so dynamo
+specialised per layer, hit `recompile_limit (8)` on all 16 ranks, and fell back
+to eager. Dense arms, with no MoELayer, logged zero such warnings.
+
+**v2.2 keeps the traced region free of Python state:**
+
+- Each MoELayer owns a non-persistent `_probe_stats` buffer (not in the
+  state_dict, so checkpoints are unchanged, and only registered when the probe
+  is on), written by pure tensor ops: per-row finiteness, first/last bad row,
+  bad-row count, `valid_token_count`, inf count. It latches the first bad
+  micro-step of the accumulation window.
+- The router index clamp stays, so a NaN forward yields a NaN *loss* instead of
+  a device assert.
+- That loss is caught by the pipeline's existing non-finite-loss skip, outside
+  compiled code, which calls `dump_from_model()` and resets the buffers. **The
+  event is now survivable**: the step is skipped, the stats are written, training
+  continues, so one run can record several events rather than dying on the first.
+- Safety guard: with the clamp, a NaN forward no longer crashes, so it would
+  reach `optimizer.step()` unless the skip path catches it. The pipeline now
+  refuses to start with the probe on and `debug_non_finite_params` off.
+
+**Validated under `torch.compile` with a compile-disabled hook per layer**, the
+same structure as training, which is the test v2.1 should have had:
+
+| mode | ms/iter | unique graphs |
+|---|---|---|
+| probe off | 54.57 | 1 |
+| control: per-instance int read in forward | 57.00 | **6** |
+| **v2.2** | 56.90 | **1** |
+
+The control proves the harness detects the specialisation (one graph per
+layer); v2.2 keeps one shared graph at +4.3%. An injected NaN gives a non-finite
+loss with no device assert, and the dump reports
+`FIRST non-finite at layer 5 router_in: bad rows 12000/32768 [0..11999]
+contiguous=True, n_inf=0`, exactly the injection. Reset clears it.
+
+Relaunched as jobs 1959381-83 (three MoE, v2.2) alongside the three dense-bs64
+arms already running (1950303/07/10). The cancelled v2.1 arms had reached steps
+9700-9720 with no trip.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
