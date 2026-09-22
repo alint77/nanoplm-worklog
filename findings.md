@@ -1013,6 +1013,46 @@ dispatch-plus-expert path, already measured 7-11% faster than the hand-built
 CUTLASS extension with no dependency and no multi-rank JIT race. What the custom
 versions buy: the counts histogram for free, and not materializing `eo[inv]`.
 
+### The dense-vs-MoE NaN rate is confounded by batch size
+Recorded earlier: 2 events in 46.8 MoE run-hours against 0 in 392 dense
+run-hours, P(0) = 5.3e-8, concluded "MoE-specific". **That conclusion is not
+supported as stated.** Every MoE run in this series uses
+`micro_batch_seqs: 64`; every dense run uses 128. The two are perfectly
+confounded, so the same numbers are equally consistent with a bs64-specific
+cause: different grad_accum, different packing, different padding structure.
+
+It is tempting to argue bs64 is cleared because the four LR-sweep arms and the
+three completed grid arms give ~47k bs64 steps with no event. That argument is
+wrong: those steps and the two crashes are the same population (all bs64, all
+MoE), and zero-event samples from a population cannot refute a hypothesis that
+predicts events in exactly that population. The rate is 2 per ~60k
+bs64-and-MoE steps and the data attributes it to neither factor.
+
+Separating them costs one run: a dense arm at bs64. Worth doing before any
+conclusion about sonicmoe is written down.
+
+### Ruling out LR, and what the crash data positions say
+**LR is unlikely.** Over the resumed run that crashed, max weight norm grew
+1.39x against the dense control's 1.34x at the same 2e-2, and max activation
+ended at 1.80e5 against dense's 1.86e5 -- MoE converges toward the dense level
+rather than diverging from it. `grad_norm` sat at 0.07 and loss descended
+smoothly to the last logged step. There is no divergence signature. Dense also
+runs 2e-2 for 392 run-hours with no event.
+
+**Data position: different for the two crashes.** epoch_data_step ~46,320
+(epoch 0) for g7-S12 and ~70,488 (epoch 3) for g4-S12-re1, so a single bad
+corpus sequence is not indicated, though per-epoch shuffling means it is not
+excluded either. The useful part is the prediction: the six diagnostic arms all
+resume the same checkpoint and traverse identical data, so **a data cause makes
+all six crash at the same step**. Nothing else in the hypothesis space does
+that.
+
+**Hypotheses still live**, in rough order: the quack/CuTe expert kernels
+(untested here, third-party, only on the crashing path); something upstream in
+attention/norm/residual; the bs64 padding path; and a hardware fault. Our own
+six Triton kernels are audited and cleared, and the router top-k in particular
+is a victim rather than a source.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
