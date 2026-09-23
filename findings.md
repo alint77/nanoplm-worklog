@@ -1181,6 +1181,51 @@ Relaunched as jobs 1959381-83 (three MoE, v2.2) alongside the three dense-bs64
 arms already running (1950303/07/10). The cancelled v2.1 arms had reached steps
 9700-9720 with no trip.
 
+### The NaN is not in the data, not one node, and not NorMuon's per-expert step
+Three results from the v2.2 batch (jobs 1959381-83, all COMPLETED 6 h, no
+events; at one event per ~37k MoE steps, 20.7k steps had a 57% chance of none).
+
+**Not a function of the data.** Nine arms resumed the same `checkpoint-8778`
+with the same data order. Eight passed step 9799 cleanly (sonic-1/2/3,
+cutlass-2/3, n2-moe-1/2/3); only `nan-cutlass-1` died there. A bad sequence would
+have hit all of them. Trajectories do diverge after the resume through
+nondeterministic kernels, so this rules out a *deterministic* data trigger, not a
+data-plus-weight-state one.
+
+**Not one bad node.** The three crashes ran on disjoint node sets:
+`jpbo-081-[02,05-07]`, `jpbo-048-[19,21,23-24]`, `jpbo-047-[03,08-09,15]`.
+
+**A hypothesis that fits every feature of the cutlass-1 dump.** Suppose one
+expert's *output* at layer 4 goes non-finite. Only the tokens routed to it (top-3
+of 47, ~6%) are hit. Layer 5 is sliding attention, window 128, so within each
+sequence those tokens contaminate their neighbours until almost every real token
+is NaN: the observed 98.8%. The padding segment is 212 identical tokens, which
+route identically and form their own attention segment, so it stays clean.
+Weights are all-gathered, so all 16 ranks trip together. Layers 2-4 router
+inputs are clean because layer 4's router runs before its experts. And if the
+expert output overflowed to inf, layer 5's RMSNorm turns inf/inf into NaN, which
+matches zero infs at the router input. It is backend-independent and MoE-only,
+since only experts see sparse, step-to-step-varying token sets.
+
+**The optimizer is not the obvious source.** The natural way for one expert to
+go bad is a NaN written into its weights by the update. Tested `dion.NorMuon`
+directly on stacked (47, 672, 1024) expert tensors at the training settings
+(lr 2e-2, mu 0.95, beta2 0.95, wd 1e-5, spectral-norm lr adjust, eps 1e-8). All
+finite under: normal gradients; one expert with exactly zero gradient every step;
+an expert alive, dormant for 40 steps, then woken by a 1e-12 gradient; a ~1e-33
+near-underflow gradient; one dormant row inside an expert; and only one of 47
+experts receiving any gradient. Reading the code agrees: the per-row step updates
+the variance with the current update *before* dividing, which bounds a row at
+`1/sqrt(1-beta2)`, and both divisions carry a 1e-8 floor. Caveat: this is
+single-GPU; the FSDP-sharded megabatch path was not tested.
+
+**What the v2.2 probe will say if it fires again.** The hypothesis predicts
+layer 4 `layer_out` bad with ~6% of rows, *non-contiguous*, and layer 4
+`router_in` clean; `n_inf > 0` there would mean the expert overflowed and RMSNorm
+did the rest. `debug_non_finite_params` is now on, so the skip path will also
+report whether any weight was non-finite at that step, which settles the
+optimizer question in the sharded setting too.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
