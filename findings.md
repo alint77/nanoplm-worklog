@@ -1274,6 +1274,74 @@ sequences of 20-512 tokens plus a padding segment, 32,768 total), under both
 **What is left.** Bad luck (11%); a compiled-path bug somewhere other than the
 position computation; NCCL internals or 16-GPU topology; hardware faults.
 
+### Shipped: MoE NaN skip-and-log (`moe_nan_guard`)
+The root cause is still unknown, so the decision was to do what large training
+pipelines do with a rare, unexplained numerical blowup: survive it and log it.
+Before this, one NaN event killed a 6 h MoE run with no checkpoint.
+
+**What it does.** `moe_nan_guard: true` (now in both base configs) clamps the
+router's top-k index in training mode. A non-finite router input then gives a
+non-finite *loss* instead of an out-of-bounds gather that aborts the job. The
+guard switches on the pipeline's non-finite-loss skip by itself, so the clamp
+can never run without the skip behind it. A new non-finite-*gradient-norm* skip
+covers a NaN that reaches the gradients but not the loss; it is decided globally
+across ranks so no rank steps while another skips. Counters
+`nonfinite_skips=loss:N,grad:N` are in the step log line and wandb.
+
+**Why clamping is safe now and was not before.** The earlier warning against
+clamping the sentinel stands for the case it described: with no detection, a
+clamped index turns a loud crash into silent weight corruption. With the loss
+and grad-norm checks enforced, the step is discarded before the optimizer sees
+it and the event is logged, so it is neither silent nor corrupting. The clamp
+applies in training only: in eval there is no skip path, so a NaN still aborts.
+
+**Verified end to end**, 4 GPUs, FSDP, compiled, with an env-guarded fault
+injector (`NANOPLM_TEST_INJECT_NAN`, inert otherwise):
+
+| injected | result |
+|---|---|
+| NaN into real tokens | loss skip on all 4 ranks, clean retry of the same step |
+| one gradient element, **rank 0 only** | grad-norm skip on **all 4** ranks, next step normal |
+| NaN into padding only | loss skip |
+
+Run completed 45/45, no crash, finite loss, `nonfinite_skips=loss:2,grad:1`
+(job 1967815). Rank-0-only poisoning with every rank skipping is the evidence
+that the global decision works; without it one rank would step while the others
+skip and the job would desync.
+
+**Finding along the way: padding NaNs reach the loss through the router
+z-loss.** The z-loss is a mean over every token, padding included, so any NaN
+reaching any MoE router input makes the total loss non-finite, even when it
+starts in the padding segment. The loss check therefore covers everything
+upstream of the last router, and the grad-norm check is defence in depth for a
+NaN born after it (final layer, head).
+
+**Three bugs in the test harness before it tested anything**, noted because
+each would have produced a false pass: `sbatch --export` splits on commas and
+silently dropped all but the first injection; dynamo does not guard on
+`nn.Module` hooks by default (`skip_nnmodule_hook_guards=True`), so a hook added
+after compilation is ignored by the compiled graph; and because a loss skip does
+not advance the step counter, a step-keyed injection re-fired into its own retry
+until the 5-consecutive-skip safety net aborted. That last run was still useful:
+the abort message confirmed "finite weights" after five poisoned windows.
+
+**Cost: +2.7% step time** on full g4-S12, 4 nodes (median 2625 ms against
+2555 ms over steady-state windows, jobs 1967185/86), from two host syncs per
+step: the loss verdict and the grad-norm verdict. The pipeline's own notes put
+one sync at ~31 ms on GH200. Merging both verdicts into one all-reduce would
+roughly halve this.
+
+**Consequence for the ablation series.** On every finite step the guard is a
+numerical no-op, so results are unchanged. But the extra step time is exactly
+the kind of change wall-clock matching penalises: a guarded MoE arm gets ~2.7%
+fewer steps than an unguarded one in the same budget. MoE arms compared against
+the existing grid (run unguarded) should either set `moe_nan_guard: false` for
+matching or carry a note. Dense arms are unaffected.
+
+**Pinned.** `.FROZEN_SHA` has a changelog entry; the manifest covers 92 files,
+all verifying, with the pre-change manifest kept as
+`.FROZEN_SHA.md5.pre-nanguard`.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
