@@ -1226,6 +1226,54 @@ did the rest. `debug_non_finite_params` is now on, so the skip path will also
 report whether any weight was non-finite at that step, which settles the
 optimizer question in the sharded setting too.
 
+### No cross-stream race, and the compiled position path is correct
+**The v2.x arms have seen no event in 64.9k MoE steps**, against three in the
+88.3k steps run without probe or with v1. At the earlier rate (one per ~29k)
+that has an 11% chance of happening by luck, so something in the v2.x setup
+might be suppressing the bug. The natural suppressor is a timing race: the v2.x
+arms add work per layer (probe) and async host copies per step
+(`debug_non_finite_params`), and a race is also nondeterministic, node-agnostic
+and MoE-only. The candidate mechanism was FSDP-gathered expert weights being
+read by a custom kernel (quack or the CUTLASS extension) before the gather's
+stream sync.
+
+**PyTorch's CUDA stream sanitizer finds no race.** Full MoE model, FSDP on one
+node (4 GPUs), eager so every op is visible, 4 steps, in all three
+configurations: no probe (`debug_non_finite_params` off, mirroring the grid
+arms), v1 (off, mirroring the first hunt) and v2.2 (on, mirroring n2/n3). No
+report in any of them (jobs 1966139/42/44).
+
+The negative is trustworthy for three reasons: a positive control in the same
+environment (a deliberate unsynchronised cross-stream write) is flagged; the
+sanitizer is armed from the env var at `torch/__init__.py:2841`; and the runs
+took 21-24 s per step, which is what instrumenting every op costs. And because
+the sanitizer checks the synchronisation pattern rather than waiting for a NaN,
+a structural missing sync would be flagged on the first step it executes, so
+four steps is sufficient.
+
+Coverage: every custom-op dispatch (router, sonicmoe, quack) and FSDP's own
+stream handoffs. The profiler trace puts all MoE compute on the main stream (7);
+the other streams are NCCL all-gather (24), reduce-scatter (28) and FSDP copies,
+so there is no private stream for an expert kernel to race on. Blind spots:
+inside NCCL (shared with dense, which never NaNs), the 16-GPU multi-node
+topology, and the compiled path, since the sanitizer cannot see inside Inductor
+kernels.
+
+Setup note: the sanitizer hooks tensor ops process-wide, including in forked
+DataLoader workers, where touching CUDA is illegal ("Cannot re-initialize CUDA
+in forked subprocess"). It needs `num_workers: 0`. `TORCHDYNAMO_DISABLE=1` gives
+an eager run without code changes.
+
+**The compiled position path is correct.** `_position_ids_from_cu_seqlens` uses
+`repeat_interleave(seq_lens)` with no `output_size`, a data-dependent shape that
+Inductor lowers to cumsum + searchsorted, the same family as the canon-layer
+codegen bug. Fuzzed compiled against eager on 3,000 realistic packings (~64
+sequences of 20-512 tokens plus a padding segment, 32,768 total), under both
+`dynamic=False` and `dynamic=True`: 0 disagreements.
+
+**What is left.** Bad luck (11%); a compiled-path bug somewhere other than the
+position computation; NCCL internals or 16-GPU topology; hardware faults.
+
 ### TE's sync-free grouped GEMM: Blackwell-only in 2.15, Hopper from 2.16/2.17
 `nvte_grouped_gemm` and its two variants take device-side group metadata, which
 is exactly what a MoE dispatch wants. In the TE we run they are unusable:
