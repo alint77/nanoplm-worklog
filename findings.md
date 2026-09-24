@@ -310,6 +310,41 @@ larger size.
 
 Also: only non-overlapped comms is a cost. Adding up total comms time is wrong.
 
+### Where a dense step goes, overlap-aware (base config, 2026-09-24)
+From the NorMuon control's rank-0 trace, 7 steps, resumed to 13k on jpbo-047
+(2013 ms/step). Tool: `design/optim-s13k/trace_breakdown.py` on fscratch, which
+merges kernel intervals across streams before attributing time.
+
+| wall time of the step | ms | share |
+|---|---|---|
+| compute only | 1203 | 59.8% |
+| compute with NCCL running alongside | 705 | 35.0% |
+| NCCL only (exposed comms) | 89 | 4.4% |
+| nothing running | 17 | 0.8% |
+
+Streams: 7 = all compute (94.8% busy), 24 = FSDP all-gather (541 ms of kernel
+time), 28 = fp32 reduce-scatter (249 ms), 20 = optimizer elementwise, 19 =
+NorMuon send/recv. 89% of NCCL kernel time is hidden; what is exposed is almost
+all forward all-gather (77 of 89 ms). Compute by class: GEMM 1139 ms (57% of the
+step, ~551 TFLOP/s on 6.28e14 matmul FLOPs, 87% of the 630 measured peak), GEGLU
+bwd 208, FA3 bwd 189, LayerNorm 116, RoPE/qkv split 90, FA3 fwd 70, GEGLU fwd 49.
+Sharing SMs with NCCL costs another ~36-41 ms/step in slower compute kernels
+(one GEMM config runs 1.9x slower under an all-gather).
+
+The original 6 h trace of the same arm (jpbo, 1926 ms/step) has the same shape:
+the 87 ms gap between the two nodes is in the compute kernels (GEMM 1068 vs 1139
+ms), not the network.
+
+**GEGLU backward is ~3x off its memory roofline.** Inductor emits one flat 1-D
+kernel over 65,536 x 5,376 elements that picks the gate or up half with
+`% 5376` and a masked branch, so every element reloads the upstream grad and
+both input halves and recomputes erf and exp: ~2.8 GB moved for 1.76 GB of
+unique data, 1.63 ms per call, an effective 1.08 TB/s. The forward kernel runs
+at ~2.7 TB/s. At forward-like efficiency the backward would take ~0.55 ms, about
+**140 ms/step (7%)**. Candidates: a hand-written GEGLU bwd that loads gate, up
+and grad once per pair, or expressing the split as `view(..., 2, 2688)` so
+inductor tiles it 2-D. Numerics-neutral, so it would not break comparability.
+
 ## Optimizer
 
 ### NorMuon's LR scaling is shape-blind under rms_norm
