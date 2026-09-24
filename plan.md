@@ -9,6 +9,41 @@ arms run fixed-step instead. Each arm changes exactly one thing from the base an
 runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The LR curve is
 the robustness check: an arm that only wins at one LR did not win.
 
+## In flight (2026-09-25): batch size at the real horizon, and optimizer follow-ups
+
+**Batch size to 44B tokens.** Tier 0b compared batches at 10.07B tokens only
+(a ~1.4 h token-matched probe, by design), and the 4.19M choice took its 0.0114
+cost as an upper bound without ever checking it at the ~44B a real arm trains
+for. Closing that now. The 4M point already exists at the real horizon: the
+Tier 1a control `t1a-normuon-lr7e-3` has the identical training config to the
+4M probe arm `t0b-normuon-b4M-lo2` (only eval cadence and stop rule differ, and
+the two agree where they overlap: 2.3200 @2400 vs 2.3155 @2500), and reads
+**2.2061 at step 10500 = 44.04B tokens** (2.1936 at 13000). So only 1M and 2M
+need extending, each at its Tier 0b best LR:
+
+| batch | arm | LR | segment 1 | segment 2 | segment 3 (to 44.04B) |
+|---|---|---|---|---|---|
+| 1.05M | `t0b-normuon-b1M-lo2` | 5e-3 | 9600 steps, 10.07B | to 19200, 20.13B | to **42000** |
+| 2.10M | `t0b-normuon-b2M-lo3` | 5e-3 | 4800 steps, 10.07B | to 9600, 20.13B | to **21000** |
+| 4.19M | `t1a-normuon-lr7e-3` | 7e-3 | (control) | | **10500** exists |
+
+Both stop points are multiples of the arm's eval cadence (400 / 200 steps), so
+all three are read at exactly 44.04B tokens, each with its own eval. The Tier 0b
+terminal checkpoints predate the data-position fix; segment 2 resumes from
+copies in `checkpoints-src-t0b20b/` whose `training_state.json` records the
+reconstructed position (epoch 0, 9600 microbatches), and the resume logged
+exactly that. Segment 2 runs (jobs 2004837-9, `checkpoints-t0b20b/`) also
+re-run 4M to 20B, which duplicates the control's first 4800 steps and serves as
+a repeat check only. Caveat to carry: the 1M/2M LRs were picked at 10B tokens,
+and the optimum may drift lower over a longer horizon.
+
+**Optimizer follow-ups, fresh to step 13000** (jobs 2003624-7, eval 2003628),
+all read against the 13k NorMuon control (2.1936):
+- NorMuon's AdamW group (embedding, unembedding and all LayerNorm weights share
+  one LR, 1e-4 today) at 3e-4, 1e-3, 3e-3.
+- cautious WD + WD 1e-5 together: ~2.187 if they are one effect (wd1e-5 alone
+  2.1870, cautious alone 2.1900), ~2.183 if additive.
+
 ## Now: the modernized base
 
 Two things, in this order, before any Tier 2 arm runs.
