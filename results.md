@@ -200,6 +200,47 @@ marginal win, and stays off only because -0.0018 does not clear the floor.
 because its optimizer state is smaller, so choosing NorMuon takes about 30% off
 the series storage bill.
 
+### Step-matched to 13000 (2026-09-24)
+
+The Tier 1b verdicts above were read on loss at a common step, but their
+downstream scores came from whatever step each arm's node allowed (10303 to
+11020). All ten knob arms and both LR-winner controls were resumed to exactly
+step 13000 and rescored, so every column now sits at one step. Full table in
+[eval-table.md](eval-table.md#tier-1a-controls--tier-1b-at-step-13000-step-matched).
+
+| arm | d loss @13000 | (was @10500) | d sup contact | d zero-shot long P@L | d PGYM |
+|---|---|---|---|---|---|
+| **NorMuon control** (7e-3) | 2.1936 | | 0.4011 | 0.4110 | 0.3458 |
+| wd 1e-5 | **-0.0066** | -0.0050 | +0.0082 | -0.0047 | +0.0011 |
+| cautious=true | **-0.0036** | -0.0018 | +0.0051 | +0.0003 | +0.0058 |
+| beta2 0.9 | 0.0000 | +0.0007 | +0.0056 | +0.0010 | -0.0018 |
+| nesterov=true | +0.0003 | +0.0007 | +0.0041 | -0.0051 | +0.0022 |
+| beta2 0.98 | +0.0008 | +0.0019 | +0.0140 | -0.0037 | -0.0042 |
+| wd 0.1 | +0.0482 | +0.0419 | -0.0017 | -0.0157 | -0.0069 |
+| **AdamW control** (5.6e-4) | 2.2176 | | 0.3569 | 0.3324 | 0.3369 |
+| beta2 0.95 | +0.0008 | +0.0003 | -0.0010 | +0.0046 | +0.0035 |
+| wd 0.01 | +0.0016 | +0.0011 | +0.0000 | +0.0229 | -0.0020 |
+| wd 0.1 | +0.0047 | +0.0034 | +0.0113 | +0.0235 | +0.0018 |
+| beta2 0.999 | +0.0093 | +0.0098 | -0.0309 | -0.0240 | -0.0091 |
+
+Control rows give absolute values; the rest are deltas against their control.
+
+**On loss, one verdict moves.** Cautious weight decay goes from -0.0018 (under
+the 0.0019 threshold) to -0.0036, 1.9x. It points the same way as wd 1e-5 (both
+weaken effective decay), so the two may be one effect; the combination has
+never been run, and this is one run per arm. wd 1e-5 strengthens (-0.0066).
+Everything else keeps its verdict. NorMuon over AdamW is -0.0240 at 13000
+against -0.0289 at 10500.
+
+**Downstream does not resolve the knobs.** Supervised contact has no measured
+noise floor, and its behaviour here says the floor is wide: every NorMuon knob
+arm, including wd 0.1 at +0.048 loss, lands within -0.002 to +0.014 of the
+control, so the control itself looks like a low draw. Zero-shot long P@L
+(2 sigma 0.0038 dev) and PGYM (0.0040) put every NorMuon knob inside or near
+their floors except wd 0.1. Only the large effects clear on every readout:
+NorMuon over AdamW (+0.044 supervised, +0.079 zero-shot, +0.009 PGYM) and
+AdamW beta2 0.999 as a loser (-0.031 / -0.024 / -0.009).
+
 ---
 
 ## The MLM objective

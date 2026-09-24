@@ -121,6 +121,31 @@ they are one ranking read four ways.
 | t1b-aw-beta2-0.95-1725953 | 10888 | 2.2353 | 0.3435 | **0.3251** | 0.1716 | 0.1113 | 0.5261 | 0.1050 | 0.1354 | 0.3192 |
 | t1b-aw-beta2-0.999-1725954 | 10879 | 2.244 | 0.3374 | **0.2897** | 0.1626 | 0.1073 | 0.5196 | 0.0920 | 0.1277 | 0.2890 |
 
+## Tier 1a controls + Tier 1b at step 13000 (step-matched)
+
+Every arm resumed from its wall-clock checkpoint (`resume.mode: continue`, same
+data position, flat LR) to exactly step 13000 on 2026-09-24, then scored in dev
+mode on the synced tree with all four frameworks. Same population as each
+other, **not** directly comparable with the wall-clock rows above (different
+step, and supervised contact was not run then). `loss` is eval loss at 13000.
+Configs `configs/*-s13k.yaml`, checkpoints `checkpoints-13k/`, jobs
+1997677-1997688, eval 1997689.
+
+| arm | step | loss | loss@10500 | pgym_scc | sel_long_P@L | sel_medium_P@L | sel_short_P@L | sel_local_P@L | casp14_long_P@L | casp15_long_P@L | sup_sel_long_P@L | sup_casp14_long_P@L | newPISCES364_acc | scl_acc |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| t1a-normuon-lr7e-3-1723831-s13000 | 13000 | 2.1936 | - | 0.3458 | 0.4110 | 0.2037 | 0.1280 | 0.5540 | 0.1367 | 0.1879 | 0.4011 | 0.1748 | 0.7943 | 0.5405 |
+| t1a-adamw-lr5.6e-4-1723827-s13000 | 13000 | 2.2176 | - | 0.3369 | 0.3324 | 0.1731 | 0.1096 | 0.5299 | 0.1089 | 0.1587 | 0.3569 | 0.1609 | 0.7855 | 0.5489 |
+| t1b-nm-wd1e-5-1725943-s13000 | 13000 | 2.1870 | - | 0.3469 | 0.4063 | 0.2004 | 0.1250 | 0.5453 | 0.1459 | 0.1807 | 0.4093 | 0.1725 | 0.7900 | 0.5593 |
+| t1b-nm-cautious-1725947-s13000 | 13000 | 2.1900 | - | 0.3516 | 0.4113 | 0.1999 | 0.1269 | 0.5493 | 0.1481 | 0.1773 | 0.4062 | 0.1896 | 0.7914 | 0.5717 |
+| t1b-nm-beta2-0.98-1725946-s13000 | 13000 | 2.1944 | - | 0.3416 | 0.4073 | 0.2024 | 0.1297 | 0.5463 | 0.1428 | 0.1821 | 0.4151 | 0.1690 | 0.7916 | 0.5551 |
+| t1b-nm-beta2-0.9-1725988-s13000 | 13000 | 2.1936 | - | 0.3440 | 0.4120 | 0.2071 | 0.1304 | 0.5528 | 0.1460 | 0.1796 | 0.4067 | 0.1741 | 0.7916 | 0.5759 |
+| t1b-nm-nesterov-1725948-s13000 | 13000 | 2.1939 | - | 0.3480 | 0.4059 | 0.2031 | 0.1258 | 0.5435 | 0.1431 | 0.1810 | 0.4052 | 0.1689 | 0.7901 | 0.5551 |
+| t1b-nm-wd0.1-1725944-s13000 | 13000 | 2.2418 | - | 0.3389 | 0.3953 | 0.1999 | 0.1256 | 0.5400 | 0.1533 | 0.1757 | 0.3994 | 0.1696 | 0.7818 | 0.5530 |
+| t1b-aw-wd0.01-1725950-s13000 | 13000 | 2.2192 | - | 0.3349 | 0.3553 | 0.1783 | 0.1090 | 0.5314 | 0.1285 | 0.1478 | 0.3569 | 0.1548 | 0.7867 | 0.5530 |
+| t1b-aw-wd0.1-1725951-s13000 | 13000 | 2.2223 | - | 0.3387 | 0.3559 | 0.1789 | 0.1116 | 0.5341 | 0.1300 | 0.1646 | 0.3682 | 0.1590 | 0.7861 | 0.5613 |
+| t1b-aw-beta2-0.95-1725953-s13000 | 13000 | 2.2184 | - | 0.3404 | 0.3370 | 0.1761 | 0.1126 | 0.5272 | 0.1118 | 0.1461 | 0.3559 | 0.1516 | 0.7879 | 0.5447 |
+| t1b-aw-beta2-0.999-1725954-s13000 | 13000 | 2.2269 | - | 0.3278 | 0.3084 | 0.1701 | 0.1089 | 0.5277 | 0.1042 | 0.1398 | 0.3260 | 0.1412 | 0.7848 | 0.5489 |
+
 ## Tier 0b: batch size, LR and decay shape (different token budgets; losses not comparable to the sections above)
 
 | arm | step | loss@10500 | pgym scc | **long P@L** | medium P@L | short P@L | local P@L | casp14 long | casp15 long | long P@L (full) |
