@@ -345,6 +345,24 @@ at ~2.7 TB/s. At forward-like efficiency the backward would take ~0.55 ms, about
 and grad once per pair, or expressing the split as `view(..., 2, 2688)` so
 inductor tiles it 2-D. Numerics-neutral, so it would not break comparability.
 
+### reshard_after_forward on the S12 MoE: -5.7 GB peak, +16% step time (2026-09-25)
+Matched 40-step pair on g4-S12 (E=47, top_k 3, bs64/ga8, sonicmoe, NaN guard
+on), 4 nodes each, rank-0 allocator peaks (jobs 2015782-3):
+
+| `fsdp_reshard_after_forward` | peak allocated | peak reserved | median step (>=15) |
+|---|---|---|---|
+| false (current) | 69,580 MB | 71,256 MB | 2670 ms |
+| true | 63,904 MB | 65,232 MB | 3093 ms (+16%) |
+
+The 5.7 GB saved is about the bf16 unsharded weights (3.13B x 2 B = 6.3 GB)
+that stop living across the forward. It is paid for with a second all-gather
+per layer per micro-step in backward, which bs64's ga 8 multiplies. Not worth
+it at S12: the card is ~95 GB, so the current setting already leaves ~24 GB of
+headroom (the "97.5%" quoted earlier was peak allocated over peak reserved, not
+over the card). It is the lever to keep in reserve if a larger-sparsity cell
+(S16, E=63) does not fit, not a default. It does not unlock bs128: activations
+dominate the peak and roughly double there.
+
 ## Optimizer
 
 ### NorMuon's LR scaling is shape-blind under rms_norm
