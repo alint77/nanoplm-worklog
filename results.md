@@ -533,6 +533,34 @@ two earlier independent measurements, which is what makes it safe to adopt.
 
 ---
 
+## Re-reading downstream verdicts under the measured floor (2026-09-25)
+
+The equal-step floors in [method.md](method.md#noise-floor) are ~2x wider than
+the step-corrected ones every earlier downstream verdict used (PGYM and
+zero-shot 2 sigma ~0.008, supervised contact 0.014, newPISCES364 0.003, scl
+0.027). Loss verdicts are unaffected (its floor reproduces). Downstream
+verdicts, re-read:
+
+| claim | delta | vs new 2 sigma | verdict now |
+|---|---|---|---|
+| modernized base vs stock: supervised contact | +0.0371 | 2.6x | holds |
+| modernized base vs stock: PGYM | +0.0194 | 2.4x | holds |
+| modernized base vs stock: zero-shot contact | -0.0161 | 1.5-2.0x | marginal |
+| batch 4M vs 1M @46.6B: PGYM | +0.0110 | 1.4x | marginal (loss decides) |
+| batch 1M vs 4M @46.6B: zero-shot | +0.0042 | 0.5x | noise |
+| NorMuon AdamW-group LR 3e-3: supervised / PGYM | +0.0135 / +0.0065 | 0.96x / 0.8x | noise |
+| cautious + wd 1e-5: supervised | +0.0105 | 0.7x | noise |
+| masking 15% vs 20% (80/10/10): zero-shot long P@L | +0.0083 | 0.8-1.0x | **noise** |
+| masking 15% vs 20% (80/10/10): PGYM | +0.0032 | 0.4x | **noise** |
+
+**The masking rate decision rests on noise.** 15% was chosen over 20% on
+downstream (decisions.md, 2026-09-11) against a loss cost of +0.0068 at step
+10000 (~4.5x the loss floor). Under the measured floor neither downstream
+margin is distinguishable from zero, and the checkpoints were also at unequal
+steps (10977 vs 10830, which by itself favours 15% by ~0.002). The 15% base is
+kept pending a team call; flagged here because the decision's stated basis no
+longer holds.
+
 ## Downstream across 67 arms
 
 Full benchmark, every arm with a loadable checkpoint (t0b, t0, t1a, t1b, t1c).
