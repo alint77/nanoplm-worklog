@@ -114,22 +114,24 @@ Downstream at 20.13B (dev mode) mildly favours 1M on contacts (supervised long
 P@L 0.342 / 0.332 / 0.330 for 1M / 2M / 4M), inside what one seed can resolve;
 the 44B eval is job 2005881.
 
-Downstream at the horizon (dev mode, synced eval tree). 4M has no checkpoint
-at exactly 44.04B, so it is read at its 46.6B wall-clock checkpoint (step
-11107), rescored on the current battery; that is 6% more tokens than the other
-two:
+Downstream at equal tokens (dev mode, synced eval tree), all three at exactly
+46,586,134,528 tokens: the 4M control's checkpoint-11107, with 1M and 2M
+resumed to the same token count (steps 44428 / 22214):
 
-| batch | tokens | PGYM | zero-shot long P@L | supervised long P@L | newPISCES364 | scl |
-|---|---|---|---|---|---|---|
-| 1M | 44.04B | 0.3375 | 0.3990 | **0.3959** | 0.7881 | **0.5593** |
-| 2M | 44.04B | 0.3403 | 0.3939 | 0.3893 | **0.7897** | 0.5322 |
-| 4M | 46.6B | **0.3492** | **0.4008** | 0.3957 | **0.7897** | 0.5468 |
+| batch | PGYM | zero-shot long P@L | supervised long P@L | newPISCES364 | scl |
+|---|---|---|---|---|---|
+| 1M | 0.3382 | **0.4050** | **0.3966** | 0.7897 | 0.5426 |
+| 2M | 0.3402 | 0.3927 | 0.3894 | **0.7901** | **0.5530** |
+| 4M | **0.3492** | 0.4008 | 0.3957 | 0.7897 | 0.5468 |
 
-Contacts tie between 1M and 4M on both readouts, with 2M lowest; PGYM favours
-4M by 0.0117 over 1M (2.9x its 0.0040 floor), partly helped by the extra
-tokens. newPISCES364 is flat (0.0016 spread) and scl scatters by 0.027 with no batch trend, neither with a measured floor yet. Nothing downstream argues against 4M.
+PGYM favours 4M by 0.0110 over 1M (2.8x its 0.0040 floor); zero-shot contact
+favours 1M by 0.0042 (1.1x its 0.0038 floor, marginal); supervised contact is
+a 1M/4M tie with 2M lowest; newPISCES364 is flat. scl scatters with no batch
+trend. With loss favouring 4M by 5.8x its floor, nothing downstream argues
+against 4M. (Floors for supervised contact, newPISCES364 and scl are being
+measured on the replicates, eval job 2018520.)
 
-![Downstream at 44B](figures/batch/fig_batch_downstream.png)
+![Downstream at 46.6B](figures/batch/fig_batch_downstream.png)
 
 ![LR brackets at 10B](figures/batch/fig_batch_lr10b.png)
 
