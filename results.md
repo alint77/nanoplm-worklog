@@ -118,15 +118,15 @@ at exactly 44.04B, so it is read at its 46.6B wall-clock checkpoint (step
 11107), rescored on the current battery; that is 6% more tokens than the other
 two:
 
-| batch | tokens | PGYM | zero-shot long P@L | supervised long P@L |
-|---|---|---|---|---|
-| 1M | 44.04B | 0.3375 | 0.3990 | **0.3959** |
-| 2M | 44.04B | 0.3403 | 0.3939 | 0.3893 |
-| 4M | 46.6B | **0.3492** | **0.4008** | 0.3957 |
+| batch | tokens | PGYM | zero-shot long P@L | supervised long P@L | newPISCES364 | scl |
+|---|---|---|---|---|---|---|
+| 1M | 44.04B | 0.3375 | 0.3990 | **0.3959** | 0.7881 | **0.5593** |
+| 2M | 44.04B | 0.3403 | 0.3939 | 0.3893 | **0.7897** | 0.5322 |
+| 4M | 46.6B | **0.3492** | **0.4008** | 0.3957 | **0.7897** | 0.5468 |
 
 Contacts tie between 1M and 4M on both readouts, with 2M lowest; PGYM favours
 4M by 0.0117 over 1M (2.9x its 0.0040 floor), partly helped by the extra
-tokens. Nothing downstream argues against 4M.
+tokens. newPISCES364 is flat (0.0016 spread) and scl scatters by 0.027 with no batch trend, neither with a measured floor yet. Nothing downstream argues against 4M.
 
 ![Downstream at 44B](figures/batch/fig_batch_downstream.png)
 
