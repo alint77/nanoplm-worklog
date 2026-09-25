@@ -50,6 +50,17 @@ this an exactly matched comparison. If a lower LR wins at 44B, the base LR
 moves before MoE and Tier 2c build on it. **Result: 2e-2 holds** (1e-2 +0.0048 at 9.5k, 5e-3 +0.0141 at 10.5k, both flat; decisions.md). Protocol change regardless: Tier 2c
 extends each arm's top two short-sweep LRs to full length and picks there.
 
+**A measured downstream noise floor at equal steps.** The Tier 0 floor is
+equal-step for loss (2 sigma 0.0019 at step 10500) but not for downstream: the
+six replicates were scored at their wall-clock stops (steps 10624-11036) and
+statistically corrected to 10500 on six points, and supervised contact has
+never had a floor at all. Resuming all six to step 13000 (jobs 2016168-74,
+`checkpoints-13k/`) and scoring them on the full battery (PGYM, zero-shot and
+supervised contact, secondary structure incl. newPISCES364, scl) gives a
+directly measured floor for every column. The Tier 1a NorMuon control is the
+identical config at seed 42, already scored at 13000, so it is a seventh
+sample: 4 same-seed runs and 3 seeds.
+
 **Optimizer follow-ups, fresh to step 13000** (jobs 2003624-7, eval 2003628),
 all read against the 13k NorMuon control (2.1936):
 - NorMuon's AdamW group (embedding, unembedding and all LayerNorm weights share
