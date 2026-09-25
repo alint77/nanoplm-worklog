@@ -37,6 +37,19 @@ re-run 4M to 20B, which duplicates the control's first 4800 steps and serves as
 a repeat check only. **Segment 2 result (20.13B tokens): 1M 2.2608, 2M 2.2592, 4M 2.2615**, a 0.0023 spread against 0.0114 at 10.07B, so the large-batch penalty is shrinking as predicted. Segment 3 submitted 2026-09-25 as jobs 2005879 (1M) and 2005880 (2M), eval 2005881, `checkpoints-t0b44b/`. **Done: at 44.04B 1M 2.2169, 2M 2.2085, 4M 2.2061; 4M confirmed** (results.md). Downstream eval pending. Caveat to carry: the 1M/2M LRs were picked at 10B tokens,
 and the optimum may drift lower over a longer horizon.
 
+**Is the modernized base's 2e-2 still right at the full horizon?** It was
+picked from a 5000-step (21B) sweep whose curve was still rising at the top,
+and short constant-LR sweeps flatter higher LRs (Tier 1d: 1e-2 was second
+through step 3000, 5e-3 from 3500 on). Every Tier 2/3 arm inherits it. Check:
+resume the 1e-2 and 1.41e-2 sweep arms from step 5000 to 10500 (jobs
+2011136-7, eval 2011138, `checkpoints-t2p105/`) and read against the 2e-2 arm's
+continuation `t2-mod-long` at step 10500 (**2.1751**). All three sweep
+checkpoints predate the data-position fix, so all three replay epoch 2 from the
+top after step 5000: the data order is identical across the three, which makes
+this an exactly matched comparison. If a lower LR wins at 44B, the base LR
+moves before MoE and Tier 2c build on it. Protocol change regardless: Tier 2c
+extends each arm's top two short-sweep LRs to full length and picks there.
+
 **Optimizer follow-ups, fresh to step 13000** (jobs 2003624-7, eval 2003628),
 all read against the 13k NorMuon control (2.1936):
 - NorMuon's AdamW group (embedding, unembedding and all LayerNorm weights share
