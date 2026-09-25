@@ -14,7 +14,7 @@ What we chose, and the number that decided it. Measurements live in
 | muon LR | 7e-3 | interior minimum, three times |
 | muon weight decay | 1e-5 (dion ships 0.01) | -0.0050 |
 | muon beta2 / cautious / nesterov | 0.95 / off / off | all ties, library defaults kept |
-| MLM | 15% masking, 80/10/10 split, token | best 80/10/10 cell downstream (split under review) |
+| MLM | 15% masking, 80/10/10 split, token | best 80/10/10 cell downstream; split closed at 80/10/10 (2026-09-25) |
 | norm | rmsnorm | adopted, not measured (below) |
 | activation | swiglu | adopted, not measured (below) |
 | QK norm | on | adopted, not measured (below) |
@@ -93,7 +93,9 @@ the loss-only argument is what the tier was designed to produce.
 on the evidence; keeping it stays with the ModernBERT default, which is one less
 deviation to defend.
 
-**The split is not finished, and 100/0/0 is currently ahead.** Downstream
+**Split closed at 80/10/10 (team decision, 2026-09-25).** 100/0/0 is not adopted and no confirmation seeds or probe run is owed; the history below is kept for the writeup.
+
+**The split was not finished, and 100/0/0 was ahead.** Downstream
 exonerated it (the +0.15 eval loss was entirely the eval-masking artifact), and
 it beats 80/10/10 on 16 of 20 band comparisons, including every rate on local,
 short and medium contacts. By the pre-registered rule that is an adopt. It is

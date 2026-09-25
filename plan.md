@@ -157,7 +157,10 @@ trained on, 1.6% of the run, on data the model has already been through twice.
 Expected effect well under the 0.0019 resolution. The pinned tree now carries
 the fix, so every later Tier 2c long run resumes cleanly.
 
-## Next: settle the masking split
+## Closed: the masking split
+
+**Closed 2026-09-25 at 15%, 80/10/10** (team decision). The seeds and probe below are no longer owed; kept as the record of what was considered.
+
 
 Still open, and the 15% decision moved it rather than closing it. Downstream
 reversed the loss on 100/0/0, which beats 80/10/10 on 16 of 20 band comparisons
@@ -505,7 +508,7 @@ revisiting now that it is no longer locked to the stable runs.
 |---|---|---|
 | LR re-sweep on the new base | 7 | fixed-step 5000, blocks everything below |
 | modernization long run | 1 | vs stock ModernBERT, control already exists |
-| 1c seeds | 4 | settle the masking split, fixed-step at 10500 |
+| ~~1c seeds~~ | 0 | struck: split closed at 80/10/10 |
 | 2a | 6 | 2 arms x 3 LRs |
 | 2b | ~8 | MoE sparsity x granularity, canon mode x set at K=7 |
 | 2c short | 24 | 8 arms x 3 LRs, fixed-step 5000 |
