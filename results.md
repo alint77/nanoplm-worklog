@@ -128,7 +128,7 @@ PGYM favours 4M by 0.0110 over 1M (1.4x its measured 0.0081 floor); zero-shot co
 favours 1M by 0.0042 (0.5x, noise); supervised contact is
 a 1M/4M tie with 2M lowest; newPISCES364 is flat. scl scatters with no batch
 trend. With loss favouring 4M by 5.8x its floor, nothing downstream argues
-against 4M. Under the equal-step floors measured since (PGYM 0.0081, zero-shot 0.0081, supervised 0.0141, newPISCES364 0.0027, scl 0.0269; figure bands) only PGYM's 4M-over-2M gap clears its floor; 1M and 4M are inseparable downstream, so loss decides.
+against 4M. Under the equal-step floors measured since (PGYM 0.0081, zero-shot 0.0081, supervised 0.0141, newPISCES364 0.0027, scl 0.0269; figure bands) PGYM is the only readout that separates the batches: 4M leads 1M by 0.0110 (1.4x) and 2M by 0.0090 (1.1x), both just past the floor. Every other downstream gap sits inside its band, so loss (4M by 5.8x) remains the decider.
 
 ![Downstream at 46.6B](figures/batch/fig_batch_downstream.png)
 
