@@ -101,8 +101,9 @@ at exactly that token count:
 | 20.13B | 2.2608 | **2.2592** | 2.2615 |
 | 39.85B | 2.2220 | 2.2142 | **2.2130** |
 | 44.04B | 2.2169 | 2.2085 | **2.2061** |
+| 46.59B | 2.2141 | 2.2054 | **2.2030** |
 
-**4M is best at the horizon that matters**: 1M is +0.0108 (5.7x the 0.0019
+The 46.59B row is the 4M control's own checkpoint (step 11107) with 1M and 2M resumed to exactly its token count (steps 44428 / 22214); all three are scored by the pipeline's eval-only mode at that step (below). **4M is best at the horizon that matters**: 1M is +0.0108 (5.7x the 0.0019
 threshold), 2M +0.0024 (1.3x, marginal). The 10B ordering was a short-horizon
 effect: small batches get more optimizer steps early, and that advantage is
 gone by ~20B and reversed by ~40B. Caveat: 1M and 2M keep the LR picked at 10B;

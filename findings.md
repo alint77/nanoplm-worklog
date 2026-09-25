@@ -383,6 +383,24 @@ unsharded weights are already resident at the peak, which sits in backward.
 Untested; numerics-neutral; a candidate for the MoE redo and for dense (4x
 there). Matches the earlier trace finding that grad_accum re-gathers per micro-step.
 
+### Wall-clock checkpoints had no eval loss at their own step (fixed 2026-09-25)
+The in-loop eval fires on `global_step % eval_steps == 0` only, so any run that
+stops off that cadence (every wall-clock stop, and fixed-step targets like
+44428) wrote a final checkpoint with no eval loss at its step; the nearest read
+was up to `eval_steps - 1` steps earlier. Two changes in the frozen tree, both
+numerics-neutral (changelog in `.FROZEN_SHA`):
+
+- the in-loop eval now also fires on the wall-clock stop step and the terminal
+  step, so every future final checkpoint is scored at its own step;
+- `NANOPLM_EVAL_ONLY=1` makes a resume load the checkpoint, run the same
+  `_evaluate` once over the same eval loader and rank sharding, log
+  `[step N] eval_loss=X (eval-only)`, and return before any training. Run it at
+  the world size the checkpoint trained at (per-rank batches enter the mean).
+  Validated: 1M at step 42000 reproduces its in-loop 2.2169 exactly.
+
+Existing checkpoints are scored with the second; submit via
+`sbatch --export=ALL,NANOPLM_EVAL_ONLY=1 slurm/sbatch_seq.sh <resume configs>`.
+
 ## Optimizer
 
 ### NorMuon's LR scaling is shape-blind under rms_norm
