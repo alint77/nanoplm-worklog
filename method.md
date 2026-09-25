@@ -134,6 +134,43 @@ order rather than kernels, which is the healthy ordering. An earlier estimate
 from three accidental duplicate pairs in Tier 0b put sigma_repeat at 0.0004
 (2.3086/2.3089, 2.3100/2.3106, 2.3248/2.3250); the Tier 0 number supersedes it.
 
+**Measured at equal steps, 2026-09-25 (supersedes the step-corrected downstream
+floors below for every decision from here on).** All six replicates were
+resumed to exactly step 13000 and scored on the full battery; the Tier 1a
+NorMuon 7e-3 control is the identical config at seed 42, so there are seven
+samples, four of them same-seed (rep1-3 + control) and three extra seeds:
+
+| metric | sd same-seed (n=4) | sd all (n=7) | **2 sigma (n=7)** | 2 sigma seed-level | previous |
+|---|---|---|---|---|---|
+| eval loss | 0.0002 | 0.0008 | **0.0015** | 0.0021 | 0.0019 |
+| PGYM total scc | 0.0041 | 0.0040 | **0.0081** | 0.0068 | 0.0040 |
+| zero-shot long P@L (sel) | 0.0012 | 0.0040 | **0.0081** | 0.0108 | 0.0038 |
+| supervised long P@L (sel) | 0.0054 | 0.0070 | **0.0141** | 0.0157 | none |
+| newPISCES364 acc | 0.0017 | 0.0014 | **0.0027** | 0.0017 | none |
+| scl acc | 0.0123 | 0.0135 | **0.0269** | 0.0284 | none |
+
+(seed-level: the four same-seed runs averaged into one seed-42 point, plus
+seeds 43-45.) Readings:
+
+- **Loss is as sharp as believed.** The equal-step floor reproduces.
+- **The downstream floors were about 2x too optimistic.** The earlier
+  PGYM and zero-shot floors came from checkpoints at unequal steps corrected
+  by a six-point regression; measured directly they are ~0.008.
+- **PGYM, supervised contact and scl are noisy even at a fixed seed**
+  (same-seed sd 0.004 / 0.005 / 0.012): the evaluation itself (dev-mode
+  subsampling, trained probes and heads) contributes most of it, so more
+  training seeds would not shrink it; averaging eval repeats or full-mode
+  aggregation would.
+- **Zero-shot contact is tight at a fixed seed (0.0012) but moves with the
+  seed**, so its noise is model-level.
+- **newPISCES364 is the sharpest downstream readout** (2 sigma 0.0027), scl
+  the bluntest (0.027: it cannot resolve anything this series produces).
+
+Consequence for reading downstream: resolvable effects are now PGYM >= 0.008,
+zero-shot >= 0.008-0.011, supervised >= 0.014, newPISCES364 >= 0.003, scl >= 0.027,
+with n=7 giving the usual 0.55x-2.9x uncertainty on each sigma. Re-read of
+decisions under these floors is in results.md.
+
 **Sample-size caveat.** sigma_seed comes from n=4, so the 95% interval on sigma
 runs roughly 0.55x to 2.9x the estimate: 2 sigma could plausibly be anywhere
 from 0.0011 to 0.0056. That does not threaten the large wins, and it is why a
