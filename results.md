@@ -579,6 +579,7 @@ verdicts, re-read:
 | batch 4M vs 1M @46.6B: PGYM | +0.0110 | 1.4x | marginal (loss decides) |
 | batch 1M vs 4M @46.6B: zero-shot | +0.0042 | 0.5x | noise |
 | NorMuon AdamW-group LR 3e-3: supervised / PGYM | +0.0135 / +0.0065 | 0.96x / 0.8x | noise |
+| NorMuon AdamW-group LR 3e-3 / 1e-3: newPISCES364 | -0.0074 / -0.0066 | 2.7x / 2.4x | **real cost** |
 | cautious + wd 1e-5: supervised | +0.0105 | 0.7x | noise |
 | masking 15% vs 20% (80/10/10): zero-shot long P@L | +0.0083 | 0.8-1.0x | **noise** |
 | masking 15% vs 20% (80/10/10): PGYM | +0.0032 | 0.4x | **noise** |
