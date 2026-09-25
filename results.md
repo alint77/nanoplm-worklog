@@ -111,6 +111,21 @@ Downstream at 20.13B (dev mode) mildly favours 1M on contacts (supervised long
 P@L 0.342 / 0.332 / 0.330 for 1M / 2M / 4M), inside what one seed can resolve;
 the 44B eval is job 2005881.
 
+Downstream at the horizon (dev mode, synced eval tree). 4M has no checkpoint
+at exactly 44.04B, so it is read at its 46.6B wall-clock checkpoint (step
+11107), rescored on the current battery; that is 6% more tokens than the other
+two:
+
+| batch | tokens | PGYM | zero-shot long P@L | supervised long P@L |
+|---|---|---|---|---|
+| 1M | 44.04B | 0.3375 | 0.3990 | **0.3959** |
+| 2M | 44.04B | 0.3403 | 0.3939 | 0.3893 |
+| 4M | 46.6B | **0.3492** | **0.4008** | 0.3957 |
+
+Contacts tie between 1M and 4M on both readouts, with 2M lowest; PGYM favours
+4M by 0.0117 over 1M (2.9x its 0.0040 floor), partly helped by the extra
+tokens. Nothing downstream argues against 4M.
+
 **Chose 4.19M**, at a cost of 0.0114. **Confirmed at 44B, where 4M is best outright (above).** Reasoning in
 [decisions.md](decisions.md#global-batch-size-419m-tokens).
 
