@@ -85,6 +85,8 @@ Three things about LR came out of the same grid and set up Tier 1:
 
 ### At the real horizon: the ranking reverses (2026-09-25)
 
+![Batch size at equal tokens](figures/batch/fig_batch_loss.png)
+
 The probe above was read at 10.07B tokens, a quarter of a real arm. Each batch's
 best NorMuon arm was then continued to 44.04B tokens, the token count of the
 4M control's step 10500, reading the 4M point from `t1a-normuon-lr7e-3`, which
@@ -125,6 +127,12 @@ two:
 Contacts tie between 1M and 4M on both readouts, with 2M lowest; PGYM favours
 4M by 0.0117 over 1M (2.9x its 0.0040 floor), partly helped by the extra
 tokens. Nothing downstream argues against 4M.
+
+![Downstream at 44B](figures/batch/fig_batch_downstream.png)
+
+![LR brackets at 10B](figures/batch/fig_batch_lr10b.png)
+
+Figures from `design/batch-44b/plots.py` on fscratch.
 
 **Chose 4.19M**, at a cost of 0.0114. **Confirmed at 44B, where 4M is best outright (above).** Reasoning in
 [decisions.md](decisions.md#global-batch-size-419m-tokens).
