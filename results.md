@@ -292,6 +292,36 @@ their floors except wd 0.1. Only the large effects clear on every readout:
 NorMuon over AdamW (+0.044 supervised, +0.079 zero-shot, +0.009 PGYM) and
 AdamW beta2 0.999 as a loser (-0.031 / -0.024 / -0.009).
 
+### Follow-ups, fresh to step 13000 (2026-09-25)
+
+Four arms trained from step 0 to 13000 on the NorMuon 7e-3 control's exact
+config, read against that control at the same step (2.1936 at 13000; the
+control reached 13000 by resume, which reproduces a continuous run to within
+noise).
+
+**The AdamW group's LR.** Under NorMuon, every non-matrix parameter
+(embedding, unembedding, all 66 LayerNorm weights, 133k parameters) sits in one
+AdamW group at `adam_learning_rate: 1e-4`, which had never been tuned.
+
+| AdamW-group LR | 4k | 7k | 10k | 13k |
+|---|---|---|---|---|
+| 1e-4 (control) | 0 | 0 | 0 | 0 |
+| 3e-4 | +0.0024 | +0.0025 | +0.0030 | +0.0023 |
+| 1e-3 | +0.0041 | +0.0033 | +0.0032 | +0.0018 |
+| **3e-3** | +0.0037 | -0.0002 | -0.0019 | **-0.0038** |
+
+A higher group LR costs early and pays late: 3e-3 is worse through 5k,
+crosses the control at 7k and is still pulling away at 13k, 2x the 0.0019
+threshold. 3e-4 and 1e-3 sit at the threshold edge on the wrong side, so the
+curve is not clean. 3e-3 is the top of the grid, so by the edge rule a 1e-2 arm
+runs before anything is adopted (job 2015098). Also a warning about short
+reads: at 4k every raised LR looked like a loss.
+
+**Cautious WD with wd 1e-5: one effect, not two.** Combined, -0.0068 at 13k,
+against -0.0066 for wd 1e-5 alone and -0.0036 for cautious alone. Cautious
+decay's gain was the same weaker-decay effect; on top of wd 1e-5 it adds
+nothing. The base keeps wd 1e-5 with cautious off.
+
 ---
 
 ## The MLM objective

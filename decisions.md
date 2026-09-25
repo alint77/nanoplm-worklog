@@ -202,6 +202,22 @@ Consequences for the writeup:
 
 ## The modernized baseline: rmsnorm, swiglu, QK norm
 
+**LR 2e-2 confirmed at the full horizon (2026-09-25).** It was picked from a
+5000-step sweep, and short constant-LR sweeps flatter higher LRs, so the 5e-3
+and 1e-2 sweep arms were continued to step 10500 on identical data (all three
+replay epoch 2 from the top after step 5000). Gap to 2e-2, every eval from
+5500 on:
+
+| LR | @5k | @7k | @9.5k | @10.5k |
+|---|---|---|---|---|
+| 1e-2 | +0.0039 | +0.0045 | +0.0048 | (node failure at 9820) |
+| 5e-3 | +0.0143 | +0.0142 | +0.0141 | +0.0141 (2.1892 vs 2.1751) |
+
+Both gaps are flat for 5000 steps, so the short sweep's pick holds at 44B. The
+1e-2 arm lost its node at step 9820 with no checkpoint past its start; its
+4500 steps of evals already answer the question, so it was not rerun.
+
+
 Adopted on 2026-09-11 by decision, **not by measurement in this series**. The
 paper's baseline therefore becomes a *modernized* ModernBERT, and every later
 claim is a delta from that, not from stock.

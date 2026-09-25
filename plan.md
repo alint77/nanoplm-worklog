@@ -47,7 +47,7 @@ continuation `t2-mod-long` at step 10500 (**2.1751**). All three sweep
 checkpoints predate the data-position fix, so all three replay epoch 2 from the
 top after step 5000: the data order is identical across the three, which makes
 this an exactly matched comparison. If a lower LR wins at 44B, the base LR
-moves before MoE and Tier 2c build on it. Protocol change regardless: Tier 2c
+moves before MoE and Tier 2c build on it. **Result: 2e-2 holds** (1e-2 +0.0048 at 9.5k, 5e-3 +0.0141 at 10.5k, both flat; decisions.md). Protocol change regardless: Tier 2c
 extends each arm's top two short-sweep LRs to full length and picks there.
 
 **Optimizer follow-ups, fresh to step 13000** (jobs 2003624-7, eval 2003628),
