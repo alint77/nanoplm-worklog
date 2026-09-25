@@ -124,12 +124,11 @@ resumed to the same token count (steps 44428 / 22214):
 | 2M | 0.3402 | 0.3927 | 0.3894 | **0.7901** | **0.5530** |
 | 4M | **0.3492** | 0.4008 | 0.3957 | 0.7897 | 0.5468 |
 
-PGYM favours 4M by 0.0110 over 1M (2.8x its 0.0040 floor); zero-shot contact
-favours 1M by 0.0042 (1.1x its 0.0038 floor, marginal); supervised contact is
+PGYM favours 4M by 0.0110 over 1M (1.4x its measured 0.0081 floor); zero-shot contact
+favours 1M by 0.0042 (0.5x, noise); supervised contact is
 a 1M/4M tie with 2M lowest; newPISCES364 is flat. scl scatters with no batch
 trend. With loss favouring 4M by 5.8x its floor, nothing downstream argues
-against 4M. (Floors for supervised contact, newPISCES364 and scl are being
-measured on the replicates, eval job 2018520.)
+against 4M. Under the equal-step floors measured since (PGYM 0.0081, zero-shot 0.0081, supervised 0.0141, newPISCES364 0.0027, scl 0.0269; figure bands) only PGYM's 4M-over-2M gap clears its floor; 1M and 4M are inseparable downstream, so loss decides.
 
 ![Downstream at 46.6B](figures/batch/fig_batch_downstream.png)
 
