@@ -171,6 +171,8 @@ zero-shot >= 0.008-0.011, supervised >= 0.014, newPISCES364 >= 0.003, scl >= 0.0
 with n=7 giving the usual 0.55x-2.9x uncertainty on each sigma. Re-read of
 decisions under these floors is in results.md.
 
+![Noise floor at equal steps](figures/noise-floor/fig_noise_floor_13k.png)
+
 **Sample-size caveat.** sigma_seed comes from n=4, so the 95% interval on sigma
 runs roughly 0.55x to 2.9x the estimate: 2 sigma could plausibly be anywhere
 from 0.0011 to 0.0056. That does not threaten the large wins, and it is why a

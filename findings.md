@@ -227,6 +227,31 @@ the local batch shrinks, GEMMs get smaller and utilisation drops. That is an
 argument about the eventual full-scale run, and it is arithmetic rather than
 something to measure.
 
+### The corpus drops 41% of UniRef50's residues (found 2026-09-25)
+Data prep keeps sequences of 20-512 residues and **drops** everything longer;
+it does not crop (`nanoplm data` filter, `min_seq_len: 20`, `max_seq_len:
+512`). Counted on the downloaded `uniref50.fasta`:
+
+| length | sequences | residues |
+|---|---|---|
+| < 20 | 63k | ~0 |
+| **20-512 (kept)** | **52.5M (87%)** | **10.24B (59%)** |
+| 513-1024 (dropped) | 5.9M | 4.11B |
+| > 1024 (dropped) | 1.8M | 2.93B |
+| all of UniRef50 | 60.3M | 17.28B |
+
+![UniRef50 length distribution](figures/data/fig_uniref50_lengths.png)
+
+So the 10.28B-token corpus is short proteins only: long, multi-domain proteins
+are absent, which plausibly matters most for long-range contacts. Every arm
+sees the same corpus, so comparisons stand; but a 13k-step arm is ~5.3 passes
+over it. A random 512-residue crop of each dropped protein would add ~3.9B
+tokens (one crop) or up to ~7B (tiling). ESM-2 cropped at 1024; ESM C trains
+on UniRef + MGnify + JGI clustered at 70% (~2.5B clusters, 6.2T tokens,
+stage 1 at 512 context, stage 2 at 2048). Whether to change the corpus, and
+when, is an open decision (it changes the task, so everything after it needs
+a new dense control).
+
 ## Precision, kernels and profiling
 
 ### FSDP silently turns fp32 layer inputs into bf16
@@ -311,6 +336,8 @@ larger size.
 Also: only non-overlapped comms is a cost. Adding up total comms time is wrong.
 
 ### Where a dense step goes, overlap-aware (base config, 2026-09-24)
+
+![Where a dense step goes](figures/perf/fig_dense_step_breakdown.png)
 From the NorMuon control's rank-0 trace, 7 steps, resumed to 13k on jpbo-047
 (2013 ms/step). Tool: `design/optim-s13k/trace_breakdown.py` on fscratch, which
 merges kernel intervals across streams before attributing time.
@@ -346,6 +373,8 @@ and grad once per pair, or expressing the split as `view(..., 2, 2688)` so
 inductor tiles it 2-D. Numerics-neutral, so it would not break comparability.
 
 ### reshard_after_forward on the S12 MoE: -5.7 GB peak for +11-15% step time (2026-09-25)
+
+Partition of the step for all three runs: see the figure under the keep-unsharded finding below.
 g4-S12 (E=47, top_k 3, bs64/ga8, sonicmoe, NaN guard on), run **F-T-F on one
 allocation** (job 2016061, jpbo-042, `slurm/sbatch_seq.sh`) so node speed cannot
 leak in; a first pair on two node groups gave +16% and is superseded. Traces in
@@ -384,6 +413,8 @@ Untested; numerics-neutral; a candidate for the MoE redo and for dense (4x
 there). Matches the earlier trace finding that grad_accum re-gathers per micro-step.
 
 ### Keeping params unsharded across grad accumulation: MoE -9%, dense -2%, free (2026-09-25)
+
+![FSDP A/Bs, step partition](figures/perf/fig_fsdp_ab_partition.png)
 New config `fsdp_keep_unsharded_across_accum` (default false): each micro-step
 calls `model.set_reshard_after_backward(at_accum_boundary)`, so only the
 boundary micro-step reshards and the forward all-gathers once per optimizer

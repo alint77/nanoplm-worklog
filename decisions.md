@@ -217,6 +217,8 @@ Both gaps are flat for 5000 steps, so the short sweep's pick holds at 44B. The
 1e-2 arm lost its node at step 9820 with no checkpoint past its start; its
 4500 steps of evals already answer the question, so it was not rerun.
 
+![Modernized-base LR at the full horizon](figures/lr-horizon/fig_modern_lr_44b.png)
+
 
 Adopted on 2026-09-11 by decision, **not by measurement in this series**. The
 paper's baseline therefore becomes a *modernized* ModernBERT, and every later

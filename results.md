@@ -187,6 +187,8 @@ slope. At equal steps 7e-3 wins. The AdamW ordering was unaffected.
 
 ### The LR grid at step 13000 (2026-09-25)
 
+![Tier 1a LR grid at 10500 and 13000](figures/optim/fig_t1a_lr_13k.png)
+
 The LR arms had the same step-count flaw as the knob arms, so all ten were
 resumed to exactly step 13000 (the two winners as the Tier 1b controls, the
 other eight in jobs 2016917-27; exact data position in every resume).
@@ -324,6 +326,27 @@ NorMuon over AdamW (+0.044 supervised, +0.079 zero-shot, +0.009 PGYM) and
 AdamW beta2 0.999 as a loser (-0.031 / -0.024 / -0.009).
 
 ### Follow-ups, fresh to step 13000 (2026-09-25)
+
+![Follow-ups: loss gap to the control over training](figures/optim/fig_followups_loss_gap.png)
+
+![Follow-ups: every readout at 13000 against its measured floor](figures/optim/fig_followups_readouts.png)
+
+Downstream at 13000 (dev mode), change vs the control (PGYM 0.3458, zero-shot
+0.4110, supervised 0.4011, newPISCES364 0.7943, scl 0.5405), against the
+equal-step floors:
+
+| arm | PGYM | zero-shot | supervised | newPISCES364 | scl |
+|---|---|---|---|---|---|
+| AdamW-group LR 3e-4 | 0.0000 | -0.0064 | 0.0000 | -0.0026 | +0.0250 |
+| AdamW-group LR 1e-3 | -0.0070 | **-0.0113** | +0.0070 | **-0.0066** | +0.0104 |
+| AdamW-group LR 3e-3 | +0.0065 | -0.0015 | +0.0135 | **-0.0074** | -0.0041 |
+| cautious + wd 1e-5 | +0.0013 | -0.0068 | +0.0105 | -0.0020 | +0.0042 |
+| 2 sigma | 0.0081 | 0.0081 | 0.0141 | 0.0027 | 0.0269 |
+
+Bold = outside the floor. **A higher AdamW-group LR costs secondary
+structure**: newPISCES364 drops 0.0066 at 1e-3 and 0.0074 at 3e-3 (2.4-2.7x
+its floor), so 3e-3's loss win is not free; 1e-3 also loses zero-shot contact
+(1.4x). Nothing else clears. Read before adopting any AdamW-group LR change.
 
 Four arms trained from step 0 to 13000 on the NorMuon 7e-3 control's exact
 config, read against that control at the same step (2.1936 at 13000; the
