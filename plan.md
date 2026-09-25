@@ -41,8 +41,8 @@ and the optimum may drift lower over a longer horizon.
 picked from a 5000-step (21B) sweep whose curve was still rising at the top,
 and short constant-LR sweeps flatter higher LRs (Tier 1d: 1e-2 was second
 through step 3000, 5e-3 from 3500 on). Every Tier 2/3 arm inherits it. Check:
-resume the 1e-2 and 1.41e-2 sweep arms from step 5000 to 10500 (jobs
-2011136-7, eval 2011138, `checkpoints-t2p105/`) and read against the 2e-2 arm's
+resume the 5e-3, 1e-2 and 1.41e-2 sweep arms from step 5000 to 10500 (jobs
+2011243, 2011136-7, evals 2011244 and 2011138, `checkpoints-t2p105/`) and read against the 2e-2 arm's
 continuation `t2-mod-long` at step 10500 (**2.1751**). All three sweep
 checkpoints predate the data-position fix, so all three replay epoch 2 from the
 top after step 5000: the data order is identical across the three, which makes
