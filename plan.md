@@ -34,7 +34,7 @@ copies in `checkpoints-src-t0b20b/` whose `training_state.json` records the
 reconstructed position (epoch 0, 9600 microbatches), and the resume logged
 exactly that. Segment 2 runs (jobs 2004837-9, `checkpoints-t0b20b/`) also
 re-run 4M to 20B, which duplicates the control's first 4800 steps and serves as
-a repeat check only. Caveat to carry: the 1M/2M LRs were picked at 10B tokens,
+a repeat check only. **Segment 2 result (20.13B tokens): 1M 2.2608, 2M 2.2592, 4M 2.2615**, a 0.0023 spread against 0.0114 at 10.07B, so the large-batch penalty is shrinking as predicted. Segment 3 submitted 2026-09-25 as jobs 2005879 (1M) and 2005880 (2M), eval 2005881, `checkpoints-t0b44b/`. Caveat to carry: the 1M/2M LRs were picked at 10B tokens,
 and the optimum may drift lower over a longer horizon.
 
 **Optimizer follow-ups, fresh to step 13000** (jobs 2003624-7, eval 2003628),
