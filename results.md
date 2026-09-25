@@ -206,7 +206,42 @@ two-sigma floor, so still a tie, but it is the direction the LR-horizon
 argument predicts (the constant-LR optimum drifts lower with more steps). It
 is the first sign of that drift in our own data and a reason the final run
 re-checks a lower LR. AdamW keeps 5.6e-4. NorMuon over AdamW: 0.0249 at 13k.
-Downstream for all ten: eval job 2022124.
+Downstream at 13000 (dev mode; controls from the Tier 1b step-matched set):
+
+| NorMuon LR | PGYM | zero-shot | supervised | newPISCES364 | scl |
+|---|---|---|---|---|---|
+| 3.5e-3 | 0.3451 | 0.3861 | 0.3908 | 0.7926 | 0.5634 |
+| 5e-3 | 0.3475 | 0.4014 | 0.3982 | 0.7894 | 0.5468 |
+| 7e-3 | 0.3458 | 0.4110 | 0.4011 | 0.7943 | 0.5405 |
+| 1e-2 | 0.3444 | 0.4087 | 0.4125 | 0.7916 | 0.5593 |
+| **1.41e-2** | **0.2944** | **0.0095** | **0.0400** | **0.5095** | **0.2370** |
+
+| AdamW LR | PGYM | zero-shot | supervised | newPISCES364 | scl |
+|---|---|---|---|---|---|
+| 2e-4 | 0.3330 | 0.2978 | 0.3218 | 0.7816 | 0.5509 |
+| 2.8e-4 | 0.3335 | 0.3068 | 0.3428 | 0.7816 | 0.5343 |
+| 4e-4 | 0.3320 | 0.3450 | 0.3630 | 0.7842 | 0.5343 |
+| 5.6e-4 | 0.3369 | 0.3324 | 0.3569 | 0.7855 | 0.5489 |
+| 8e-4 | 0.3394 | 0.3392 | 0.3483 | 0.7857 | 0.5717 |
+
+![Tier 1a downstream vs LR at step 13000](figures/optim/fig_t1a_downstream_13k.png)
+
+Within NorMuon 3.5e-3 to 1e-2 every downstream readout is flat inside its
+floor, so downstream agrees with the loss that the optimum is broad. NorMuon
+beats AdamW by 0.04-0.07 on both contact readouts at every LR pairing.
+
+**NorMuon 1.41e-2 has collapsed downstream, and loss barely shows it.** Its
+eval loss is 2.2590, +0.065 over the healthy arms and even slightly *better*
+than at 10500 (2.2623), yet zero-shot contact fell from 0.2757 at its 10.8k
+wall-clock checkpoint to 0.0095 at 13000, supervised contact reads 0.0400,
+newPISCES364 0.5095 (healthy ~0.79) and scl 0.2370. The representation keeps
+degrading while the MLM loss holds. This is the second arm with loss and
+structure decoupled (after `t0b-normuon-b1M-1721969`, below), both NorMuon
+above its optimum; together they say an LR a notch too high can destroy the
+features downstream tasks read without the loss curve raising an alarm.
+Practical rule: never adopt an LR or architecture on loss alone near the top
+of a stable range, and watch a cheap structural readout (newPISCES364, the
+sharpest downstream metric) during long runs.
 
 ### Weight decay, beta2, and the nanoplm deviations (10 runs)
 
