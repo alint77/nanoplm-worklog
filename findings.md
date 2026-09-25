@@ -345,23 +345,43 @@ at ~2.7 TB/s. At forward-like efficiency the backward would take ~0.55 ms, about
 and grad once per pair, or expressing the split as `view(..., 2, 2688)` so
 inductor tiles it 2-D. Numerics-neutral, so it would not break comparability.
 
-### reshard_after_forward on the S12 MoE: -5.7 GB peak, +16% step time (2026-09-25)
-Matched 40-step pair on g4-S12 (E=47, top_k 3, bs64/ga8, sonicmoe, NaN guard
-on), 4 nodes each, rank-0 allocator peaks (jobs 2015782-3):
+### reshard_after_forward on the S12 MoE: -5.7 GB peak for +11-15% step time (2026-09-25)
+g4-S12 (E=47, top_k 3, bs64/ga8, sonicmoe, NaN guard on), run **F-T-F on one
+allocation** (job 2016061, jpbo-042, `slurm/sbatch_seq.sh`) so node speed cannot
+leak in; a first pair on two node groups gave +16% and is superseded. Traces in
+`design/rsaf-traces/` on fscratch, breakdowns beside them
+(`design/optim-s13k/trace_breakdown.py`).
 
-| `fsdp_reshard_after_forward` | peak allocated | peak reserved | median step (>=15) |
+| | F (off) | T (on) | F2 (off) |
 |---|---|---|---|
-| false (current) | 69,580 MB | 71,256 MB | 2670 ms |
-| true | 63,904 MB | 65,232 MB | 3093 ms (+16%) |
+| peak allocated / reserved | 69,580 / 71,256 MB | **63,904 / 65,232 MB** | 69,580 / 71,256 MB |
+| step time, unprofiled (step 30) | 2718 ms | 3036 ms (+11.5%) | 2731 ms |
+| step time, profiled | 2886 ms | 3327 ms (+14.6%) | 2923 ms |
+| all-gathers per step, fwd / bwd | 288 / 0 | 288 / **288** | 288 / 0 |
+| NCCL kernel time in backward | 237 ms | 1482 ms | 232 ms |
+| exposed comms / idle | 307 / 175 ms | 373 / 290 ms | 323 / 225 ms |
+| contention tax (compute slowed by NCCL) | 203 ms | **397 ms** | 187 ms |
 
-The 5.7 GB saved is about the bf16 unsharded weights (3.13B x 2 B = 6.3 GB)
-that stop living across the forward. It is paid for with a second all-gather
-per layer per micro-step in backward, which bs64's ga 8 multiplies. Not worth
-it at S12: the card is ~95 GB, so the current setting already leaves ~24 GB of
-headroom (the "97.5%" quoted earlier was peak allocated over peak reserved, not
-over the card). It is the lever to keep in reserve if a larger-sparsity cell
-(S16, E=63) does not fit, not a default. It does not unlock bs128: activations
-dominate the peak and roughly double there.
+Where T's extra ~423 ms (profiled) goes: the backward re-gathers every layer
+on every micro-step (288 more all-gathers, +1.25 s of NCCL kernel time). About
+95% of that is hidden under backward compute, so the cost is not mostly exposed
+comms (+58 ms) but **SM contention**: GEMMs sharing the GPU with the ring
+all-gather run slower, +202 ms/step (dense GEMM +101, sonicmoe GEMM +68), plus
++90 ms more idle and +31 ms of FSDP copy-out. The 5.7 GB saved is about the bf16
+unsharded weights (3.13B x 2 B = 6.3 GB). The card is ~95 GB and S12 already
+leaves ~24 GB free, so this stays off; it is the reserve lever for a
+larger-sparsity cell that does not fit.
+
+**The bigger lever the traces show is the opposite direction.** Even with
+reshard off, forward all-gathers the whole model on every micro-step (288 =
+36 units x 8), because FSDP reshards after each backward; that is 850-910 ms of
+NCCL kernel time, ~300 ms of it exposed, plus most of the 190-200 ms contention
+tax. Keeping parameters unsharded across the accumulation window
+(`set_reshard_after_backward(False)` on non-final micro-steps) would gather
+once per optimizer step, cut that traffic ~8x, and cost little memory: the
+unsharded weights are already resident at the peak, which sits in backward.
+Untested; numerics-neutral; a candidate for the MoE redo and for dense (4x
+there). Matches the earlier trace finding that grad_accum re-gathers per micro-step.
 
 ## Optimizer
 
