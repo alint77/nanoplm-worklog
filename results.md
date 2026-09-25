@@ -276,6 +276,14 @@ the series storage bill.
 
 ### Step-matched to 13000 (2026-09-24)
 
+![Loss gap to the control over training](figures/optim/fig_knobs_loss_gap.png)
+
+![Every readout at step 13000 against its measured floor](figures/optim/fig_knobs_readouts.png)
+
+![Loss vs downstream, all twelve arms](figures/optim/fig_knobs_loss_vs_down.png)
+
+Figures from `design/optim-s13k/plots.py` on fscratch; noise bands are the equal-step floors measured 2026-09-25. One event the curves show that the tables do not: AdamW beta2 0.999 spiked by +0.35 in eval loss at step 7500 and was back to ~+0.01 by 8500, a transient instability that beta2 0.98 and 0.95 never had.
+
 The Tier 1b verdicts above were read on loss at a common step, but their
 downstream scores came from whatever step each arm's node allowed (10303 to
 11020). All ten knob arms and both LR-winner controls were resumed to exactly
