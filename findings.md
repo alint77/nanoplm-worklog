@@ -383,6 +383,38 @@ unsharded weights are already resident at the peak, which sits in backward.
 Untested; numerics-neutral; a candidate for the MoE redo and for dense (4x
 there). Matches the earlier trace finding that grad_accum re-gathers per micro-step.
 
+### Keeping params unsharded across grad accumulation: MoE -9%, dense -2%, free (2026-09-25)
+New config `fsdp_keep_unsharded_across_accum` (default false): each micro-step
+calls `model.set_reshard_after_backward(at_accum_boundary)`, so only the
+boundary micro-step reshards and the forward all-gathers once per optimizer
+step. Off / on / off on one allocation (job 2016566), 30 steps each, traces in
+`design/kua-traces/` on fscratch:
+
+| | step, unprofiled (s10/s15/s30) | peak VRAM | eval @30 |
+|---|---|---|---|
+| S12 MoE off | 2694 / 2704 / 2690 ms | 69,580 MB | 2.8855 |
+| **S12 MoE on** | **2445 / 2462 / 2444 ms (-9.0%)** | 69,582 MB | 2.8864 |
+| S12 MoE off | 2666 / 2686 / 2665 ms | 69,580 MB | 2.8858 |
+| dense off | 1969 / 1977 / 1951 ms | 86,715 MB | 2.8930 |
+| **dense on** | **1918 / 1923 / 1922 ms (-1.9%)** | 86,717 MB | 2.8936 |
+| dense off | 1954 / 1960 / 1954 ms | 86,715 MB | 2.8924 |
+
+All-gathers per step drop 288 -> 36 (MoE, 688 -> 75 ms of NCCL kernel time)
+and 144 -> 36 (dense, 552 -> 120 ms); exposed comms on MoE 486 -> 98 ms and the
+shared-SM slowdown halves on both (113 -> 56, 116 -> 56 ms). Memory is
+unchanged: the unsharded weights were already resident at the peak.
+Numerically identical: train losses match to four decimals through step 20 and
+on/off differ afterwards by no more than the two off runs differ from each
+other.
+
+What it exposes on MoE: GPU idle rises 485 -> 581 ms. With the comms gone the
+MoE step is host-dispatch bound (27k launches per step, per the earlier trace
+finding), so the next MoE speedup is on the host side, not the network.
+
+Adoption: numerics-neutral, so free for fixed-step arms; for wall-clock
+matching it changes tokens per hour, so it is adopted at a clean boundary (the
+MoE redo and everything after), not mid-comparison.
+
 ### Wall-clock checkpoints had no eval loss at their own step (fixed 2026-09-25)
 The in-loop eval fires on `global_step % eval_steps == 0` only, so any run that
 stops off that cadence (every wall-clock stop, and fixed-step targets like
