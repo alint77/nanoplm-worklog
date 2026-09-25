@@ -169,7 +169,8 @@ token-matched at 10.07B tokens ([results](results.md#global-batch-size)):
 **Chose 4.19M despite it being 0.0114 worse**, for four reasons in order of
 weight.
 
-1. **The 0.0114 is an upper bound, not the cost at our horizon.** It was
+1. **Measured since at 44B: 4M is best** (1M +0.0108, 2M +0.0024; [results](results.md#at-the-real-horizon-the-ranking-reverses-2026-09-25)). Original reasoning kept below.
+   **The 0.0114 is an upper bound, not the cost at our horizon.** It was
    measured at 10.07B tokens; a real ablation run is ~44B, and a large batch's
    per-step disadvantage shrinks as the number of steps grows. Confirming it
    exactly would take a pair of 6 h runs, which is not worth 200 GPU-hours.

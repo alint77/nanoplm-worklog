@@ -83,7 +83,35 @@ Three things about LR came out of the same grid and set up Tier 1:
   nearly flat: best-per-batch spread 0.011, and 1M vs 4M differ by 0.0009, so
   4.19M would be free for AdamW.
 
-**Chose 4.19M**, at a cost of 0.0114. Reasoning in
+### At the real horizon: the ranking reverses (2026-09-25)
+
+The probe above was read at 10.07B tokens, a quarter of a real arm. Each batch's
+best NorMuon arm was then continued to 44.04B tokens, the token count of the
+4M control's step 10500, reading the 4M point from `t1a-normuon-lr7e-3`, which
+has the identical training config (it and the 4M probe arm agree where they
+overlap). Resumes carried the exact data position (reconstructed for the
+pre-fix probe checkpoints, recorded natively after), and every read is an eval
+at exactly that token count:
+
+| tokens | 1M (5e-3) | 2M (5e-3) | 4M (7e-3) |
+|---|---|---|---|
+| 10.07B | **2.3086** | 2.3118 | 2.3200 |
+| 20.13B | 2.2608 | **2.2592** | 2.2615 |
+| 39.85B | 2.2220 | 2.2142 | **2.2130** |
+| 44.04B | 2.2169 | 2.2085 | **2.2061** |
+
+**4M is best at the horizon that matters**: 1M is +0.0108 (5.7x the 0.0019
+threshold), 2M +0.0024 (1.3x, marginal). The 10B ordering was a short-horizon
+effect: small batches get more optimizer steps early, and that advantage is
+gone by ~20B and reversed by ~40B. Caveat: 1M and 2M keep the LR picked at 10B;
+a lower LR might suit their longer horizon better, so the 1M deficit is an
+upper bound in the same sense the original 0.0114 was.
+
+Downstream at 20.13B (dev mode) mildly favours 1M on contacts (supervised long
+P@L 0.342 / 0.332 / 0.330 for 1M / 2M / 4M), inside what one seed can resolve;
+the 44B eval is job 2005881.
+
+**Chose 4.19M**, at a cost of 0.0114. **Confirmed at 44B, where 4M is best outright (above).** Reasoning in
 [decisions.md](decisions.md#global-batch-size-419m-tokens).
 
 ---
