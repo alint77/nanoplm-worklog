@@ -184,6 +184,27 @@ independent measurements agree on it.
 drawn nodes 8% faster and run 500 extra steps, worth about 0.004 at the late-run
 slope. At equal steps 7e-3 wins. The AdamW ordering was unaffected.
 
+### The LR grid at step 13000 (2026-09-25)
+
+The LR arms had the same step-count flaw as the knob arms, so all ten were
+resumed to exactly step 13000 (the two winners as the Tier 1b controls, the
+other eight in jobs 2016917-27; exact data position in every resume).
+
+| NorMuon LR | @10500 | **@13000** | | AdamW LR | @10500 | **@13000** |
+|---|---|---|---|---|---|---|
+| 3.5e-3 | 2.2111 | 2.1968 | | 2e-4 | 2.2607 | 2.2421 |
+| **5e-3** | 2.2068 | **2.1927** | | 2.8e-4 | 2.2489 | 2.2313 |
+| 7e-3 | **2.2061** | 2.1936 | | 4e-4 | 2.2413 | 2.2248 |
+| 1e-2 | 2.2116 | 2.1992 | | **5.6e-4** | **2.2350** | **2.2176** |
+| 1.41e-2 | 2.2623 | 2.2590 | | 8e-4 | 2.2365 | 2.2200 |
+
+NorMuon's top two swap: 5e-3 now leads 7e-3 by 0.0009, inside the ~0.0020
+two-sigma floor, so still a tie, but it is the direction the LR-horizon
+argument predicts (the constant-LR optimum drifts lower with more steps). It
+is the first sign of that drift in our own data and a reason the final run
+re-checks a lower LR. AdamW keeps 5.6e-4. NorMuon over AdamW: 0.0249 at 13k.
+Downstream for all ten: eval job 2022124.
+
 ### Weight decay, beta2, and the nanoplm deviations (10 runs)
 
 At the winning LRs. Controls are the LR winners, so nothing was re-run.
