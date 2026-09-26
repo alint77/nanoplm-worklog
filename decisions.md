@@ -26,6 +26,19 @@ What we chose, and the number that decided it. Measurements live in
 Open: everything architectural. That is what the remaining tiers are for
 ([plan.md](plan.md)).
 
+## Decisions of 2026-09-26
+
+- **Masking stays at 15%, 80/10/10** (team call), knowing that the downstream
+  margin that originally chose it over 20% is inside the equal-step noise floor
+  and loss favours 20% by ~4.5x its floor. It is now a choice, not a measured
+  win; the writeup says so.
+- **Corpus unchanged**: UniRef50, 20-512 residues, long proteins dropped (41% of
+  residues). Stated as a limitation, not changed mid-series.
+- **`fsdp_keep_unsharded_across_accum: true`** in `base-modern15.yaml` for every
+  arm from here on: numerically identical, -9% MoE / -2% dense step time. Arms
+  before this point ran without it; fixed-step comparisons are unaffected, and
+  the GPU-hour reading is only compared within the post-change set.
+
 ## The series
 
 **Threw away the jul30 ablations** on 2026-09-07 and started over. Arms were
