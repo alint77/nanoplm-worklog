@@ -375,13 +375,19 @@ equal-step floors:
 | AdamW-group LR 3e-4 | 0.0000 | -0.0064 | 0.0000 | -0.0026 | +0.0250 |
 | AdamW-group LR 1e-3 | -0.0070 | **-0.0113** | +0.0070 | **-0.0066** | +0.0104 |
 | AdamW-group LR 3e-3 | +0.0065 | -0.0015 | +0.0135 | **-0.0074** | -0.0041 |
+| AdamW-group LR 1e-2 | +0.0071 | 0.0000 | +0.0039 | +0.0006 | +0.0146 |
 | cautious + wd 1e-5 | +0.0013 | -0.0068 | +0.0105 | -0.0020 | +0.0042 |
 | 2 sigma | 0.0081 | 0.0081 | 0.0141 | 0.0027 | 0.0269 |
 
-Bold = outside the floor. **A higher AdamW-group LR costs secondary
-structure**: newPISCES364 drops 0.0066 at 1e-3 and 0.0074 at 3e-3 (2.4-2.7x
-its floor), so 3e-3's loss win is not free; 1e-3 also loses zero-shot contact
-(1.4x). Nothing else clears. Read before adopting any AdamW-group LR change.
+Bold = outside the floor. newPISCES364 drops 0.0066 at 1e-3 and 0.0074 at
+3e-3 (2.4-2.7x its floor), and 1e-3 also loses zero-shot contact (1.4x). **But
+the 1e-2 arm, which brackets the sweep, has the same loss gain (-0.0034 vs
+-0.0038 at 3e-3, a plateau) with no cost anywhere** (newPISCES364 +0.0006,
+every column inside its floor). So the newPISCES364 drop is not a monotone
+cost of the higher LR; with one seed per arm it reads as a fluctuation at
+1e-3/3e-3, not a trade-off. The AdamW-group LR plateau is 3e-3 to 1e-2, with
+1e-2 the cleaner candidate; measured on the stock base, so it is re-checked on
+the modernized base before it goes into the recipe.
 
 Four arms trained from step 0 to 13000 on the NorMuon 7e-3 control's exact
 config, read against that control at the same step (2.1936 at 13000; the
@@ -614,7 +620,7 @@ verdicts, re-read:
 | batch 4M vs 1M @46.6B: PGYM | +0.0110 | 1.4x | marginal (loss decides) |
 | batch 1M vs 4M @46.6B: zero-shot | +0.0042 | 0.5x | noise |
 | NorMuon AdamW-group LR 3e-3: supervised / PGYM | +0.0135 / +0.0065 | 0.96x / 0.8x | noise |
-| NorMuon AdamW-group LR 3e-3 / 1e-3: newPISCES364 | -0.0074 / -0.0066 | 2.7x / 2.4x | **real cost** |
+| NorMuon AdamW-group LR 3e-3 / 1e-3: newPISCES364 | -0.0074 / -0.0066 | 2.7x / 2.4x | outside the floor, but absent at 1e-2 (+0.0006): not a monotone cost |
 | cautious + wd 1e-5: supervised | +0.0105 | 0.7x | noise |
 | masking 15% vs 20% (80/10/10): zero-shot long P@L | +0.0083 | 0.8-1.0x | **noise** |
 | masking 15% vs 20% (80/10/10): PGYM | +0.0032 | 0.4x | **noise** |
