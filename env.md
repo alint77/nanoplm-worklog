@@ -149,7 +149,7 @@ kernel parity `abx/parity.py`.
 ## Archive (2026-09-29, before the Oct 1 scratch/fscratch cleanup)
 
 fscratch cleanup (30-day retention) and scratch cleanup (90-day) start
-2026-10-01. The series was trimmed (~1.9 TB: core dumps in `run/`, embedding
+2026-10-01, so everything is on project1, the only area without cleanup. The series was trimmed (~1.9 TB: core dumps in `run/`, embedding
 `.h5` files, the MoE and NaN-hunt checkpoints, the wall-clock checkpoints
 superseded by their 13k resumes, periodic checkpoints inside the 13k fresh
 runs) and archived:
@@ -161,7 +161,7 @@ runs) and archived:
 | `.../archive/sep07_abl/data.tar` | tokenized corpus shards | 9.8 GB |
 | `.../archive/sep07_abl/meta.tar` | logs, configs, slurm, tools, design (traces, plot scripts), run-meta (per-run `debug_layerwise.jsonl`), wandb, NaN dumps, `.FROZEN_SHA*` | 15 GB |
 | `.../archive/sep07_abl/eval.tar` | eval reports, provenance, eval datasets (no `.h5`) | 4.6 GB |
-| `/e/scratch/profound/naeimitabiei1/sep07_abl_resume/t2a_10500_full.tar` (90 days) | rope A-F and all-global at 10500 with optimizer state (cooldown resume points) | 28 GB |
+| `.../archive/sep07_abl/t2a_10500_full.tar` | rope A-F and all-global at 10500 with optimizer state (cooldown resume points) | 28 GB |
 
 Verified: every weight file size-matches its source, a random sample
 checksum-matches, tar entry counts match the source trees. Script:
