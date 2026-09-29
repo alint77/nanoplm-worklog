@@ -2049,3 +2049,90 @@ worth carrying: the window is not a meaningful lever at this scale, so tuning it
 further is not worth runs; and if sequence length grows in a later series both
 halves of this conclusion have to be re-measured, because the window's FLOP
 saving scales with L while its wall-clock saving here did not.
+
+## mHC-lite costs 20-31% of step time; fused kernels take a quarter of that back (2026-09-29)
+
+![mHC-lite overhead](figures/perf/fig_mhc_overhead.png)
+
+mHC-lite (n=4 streams, C=1024, layer-level wrapping) on the base-modern15
+config, 30-step smokes on 4 nodes, micro-batch 64 x 512 = 32768 tokens per GPU
+(128 OOMs with the 4x residual), 8 micro-steps. Every comparison ran back to back
+on one allocation. Medians of steps 10/15/30, unprofiled:
+
+| implementation | step ms | over mHC off | debug hooks off: step ms | over off |
+|---|---|---|---|---|
+| mHC off | 1933 | | 1909 | |
+| Triton ops (`mhc_triton_fused: true`) | 2526 | +593 ms (+30.7%) | 2440 | +531 ms (+27.8%) |
+| **v2 fused kernels** | **2375** | **+442 ms (+22.9%)** | **2292** | **+383 ms (+20.1%)** |
+| PyTorch path, the default (job 2114550, off 1993) | 3100 | +1108 ms (+55.6%) | | |
+
+Jobs 2114965 and 2115062 drew the same four nodes. Eval loss at step 30 is the
+same across the paths (2.887-2.890), within smoke noise.
+
+**Where the Triton-path overhead went** (rank-0 traces, `mhc_opt/trace_breakdown.py`,
+`gap_analysis.py`, `kernel_origin.py`):
+
+- 284 ms/step in the mHC kernels themselves.
+- ~195 ms/step of glue around them. Most of it is the autograd add of the two
+  (T,4,C) gradients for x, plus adds and copies.
+- ~250 ms/step of extra GPU idle. The host cannot keep up with 35 launches per block.
+- Comms interaction is small. The mHC kernels run 1.5x slower while NCCL shares
+  the SMs, but that costs only ~3 ms/step, because the NCCL kernels mostly land
+  on GEMMs.
+
+The default PyTorch path is worse on every count: its stream mixing runs as
+GEMM/GEMV calls.
+
+**The debug tracker costs ~60 ms/step under mHC and ~24 ms/step dense.** Its
+residual hook (`debug_layerwise_metrics: true` in the base) runs eagerly on
+every block in every micro-step. It computes `(x*x).mean()` over the whole
+residual, which mHC makes 4x wider, with a graph break around each call.
+
+**Isolated, one block at T=32768** (identity inner layer): the Triton ops run 35
+kernels for 1500 us. Each kernel is already near HBM bandwidth. The cost is the
+~16 full passes over the 4C-wide stream.
+
+The v2 kernels (`mhc_opt/src/mhc_fused2.py`) need 9 launches and 1092 us:
+
+- **pre fwd:** one kernel does the RMS, the 32-way projection, every
+  coefficient (sigmoids, the softmax over the 24 permutations, H_merged) and
+  the pre-map.
+- **post bwd:** no longer forms gx.
+- **pre bwd, coefficients kernel:** recomputes the coefficients and
+  back-propagates through them in registers. It replaces the RMSNorm reduction
+  g_xn.x_n with g_proj.proj (32 values).
+- **pre bwd, gx kernel:** writes the whole gx = H^T go + h_pre g_li + RMSNorm
+  term in one pass and accumulates the W grad on the way.
+
+The block output gradient reaches pre's backward through a placeholder output,
+so autograd never sums two gradients for x. That placeholder has to be a dense
+buffer: a stride-0 one crashed AOT autograd's tangent coercion at the
+compiled-graph boundary around the FSDP-wrapped layer.
+
+With the identity layer, compiled fwd+bwd goes 2.05 -> 1.29 ms (T=32768) and
+3.21 -> 2.32 ms (T=65536). Error against an fp32 reference is 0.3% relative on
+out, gx and every parameter grad, against 0.5% for the existing Triton path. The
+two paths use the same math, including RMSNorm eps 1e-6.
+
+**Other options checked:**
+
+- **DeepSeek TileKernels (TileLang):** 4.99 ms fwd+bwd at T=32768, slower than
+  both. Its norm-fn backward takes 3.1 ms at our shape. Its post forward
+  (164 us) is the one piece at roofline, and ours is within 4% of it.
+- **No other framework ships an mHC-lite (permutation-mixture) kernel.**
+
+**What is left.**
+
+- **pre bwd gx kernel:** 406 us against a ~240 us traffic floor. ncu shows 255
+  registers/thread, 12.5% occupancy and 1.87 TB/s: it is latency bound, and
+  Triton will not hold the W slice and the W-grad accumulators without
+  starving occupancy.
+- **pre fwd:** 196 us. It reads x twice, where a single pass needs the 16-token
+  x tile kept in shared memory.
+- Both are CuTeDSL jobs (explicit SMEM staging). The 5-kernel design's traffic
+  floor is 765 us per block, ~30% under v2.
+- **Host side:** v2 leaves ~95 ms/step more GPU idle than mHC off.
+
+Code, scripts and results are archived at `archive/mhc_opt/` on project1. The
+model patch is in `pkgs_patch/`, gated by `NANOPLM_MHC_FUSED2=1`, and is not yet
+in the nanoplm repo.
