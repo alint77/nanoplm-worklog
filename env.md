@@ -145,3 +145,26 @@ kernel parity `abx/parity.py`.
   installed `flash_attn_3`. **Verify the three `_C.abi3.so` md5s differ**
   (`3008de034885` / `d880c883f129` / `84db0afd17c4`): a PYTHONPATH that fails to
   override would make every arm identical and the A/B a silent no-op.
+
+## Archive (2026-09-29, before the Oct 1 scratch/fscratch cleanup)
+
+fscratch cleanup (30-day retention) and scratch cleanup (90-day) start
+2026-10-01. The series was trimmed (~1.9 TB: core dumps in `run/`, embedding
+`.h5` files, the MoE and NaN-hunt checkpoints, the wall-clock checkpoints
+superseded by their 13k resumes, periodic checkpoints inside the 13k fresh
+runs) and archived:
+
+| where | what | size |
+|---|---|---|
+| `/e/project1/profound/alint77/archive/sep07_abl/weights/` (permanent) | `pytorch_model.bin` + configs + training state for every real run (109), same layout as fscratch | 162 GB |
+| `.../archive/sep07_abl/env_pkgs.tar` | frozen venv + pinned source | 8.2 GB |
+| `.../archive/sep07_abl/data.tar` | tokenized corpus shards | 9.8 GB |
+| `.../archive/sep07_abl/meta.tar` | logs, configs, slurm, tools, design (traces, plot scripts), run-meta (per-run `debug_layerwise.jsonl`), wandb, NaN dumps, `.FROZEN_SHA*` | 15 GB |
+| `.../archive/sep07_abl/eval.tar` | eval reports, provenance, eval datasets (no `.h5`) | 4.6 GB |
+| `/e/scratch/profound/naeimitabiei1/sep07_abl_resume/t2a_10500_full.tar` (90 days) | rope A-F and all-global at 10500 with optimizer state (cooldown resume points) | 28 GB |
+
+Verified: every weight file size-matches its source, a random sample
+checksum-matches, tar entry counts match the source trees. Script:
+`tools/archive_sep07.sh`. The 4M batch reference (`t1a-normuon-lr7e-3` at
+step 11107, weights only) is under `checkpoints/_preserved/`. Not archived:
+smoke/validate/canary/TE-rope test runs and compile caches (regenerable).
