@@ -2136,3 +2136,73 @@ two paths use the same math, including RMSNorm eps 1e-6.
 Code, scripts and results are archived at `archive/mhc_opt/` on project1. The
 model patch is in `pkgs_patch/`, gated by `NANOPLM_MHC_FUSED2=1`, and is not yet
 in the nanoplm repo.
+
+## CuTeDSL mHC kernels: backward at the DRAM floor, -69 ms/step end to end (2026-09-30)
+
+![CuTe mHC kernels](figures/perf/fig_mhc_cute_kernels.png)
+
+The two pre-side kernels are rewritten in CuTeDSL (`NANOPLM_MHC_FUSED2=2`). Each
+uses a 4-CTA cluster where CTA q owns a quarter of the columns, x arrives by TMA,
+and the partial projections are exchanged over DSMEM. The post-side kernels stay v2.
+
+Kernel times per block call (GH200, interleaved do_bench medians; the backward
+includes the dW GEMM). The floor is the traffic at 3.27 TB/s, the best rate a plain
+Triton kernel reached on the same 4:1 read/write mix:
+
+| T | fwd v2 | fwd CuTe | fwd floor | bwd v2 | bwd CuTe | bwd floor |
+|---|---|---|---|---|---|---|
+| 32768 | 195 us | **126 us** | 105 us | 531 us | **356 us** | 353 us |
+| 65536 | 376 us | **234 us** | 210 us | 1023 us | **670 us** | 705 us |
+
+**End to end** (4 nodes, base-modern15 + mHC-lite, medians of steps 10/15/30,
+debug hooks off, v2/CuTe/v2/CuTe back to back on one allocation):
+
+| job | v2 step ms | CuTe step ms | delta |
+|---|---|---|---|
+| 2117350 (Sep 29 kernels) | 2267, 2273 | 2242, 2237 | -30 ms (-1.3%) |
+| 2118117 (Sep 30 backward, Sep 29 forward) | 2277, 2291 | 2219, 2211 | **-69 ms (-3.0%)** |
+
+Eval loss at step 30 matches within smoke noise (2.883-2.894 across all eight
+runs). Against an fp32 reference of one block, out/gx/gW/galpha/gbias errors are
+the same as v2's (0.27-0.63%). The Sep 30 forward (-11 us per call, roughly
+another -6 ms/step) is not in an e2e run yet.
+
+**What moved the backward (-16%, now at the floor).**
+
+- **A global load on the critical path:** h_pre was read from global memory right
+  before a barrier. Prefetching it a tile ahead cut 1.1K of 7K cycles per tile.
+- **A slow division path:** `e / ssum` with e == 0 on 8 lanes fails the fast-path
+  check (FCHK), so the whole warp drops into the IEEE division subroutine. The fix
+  is `e * (1 / ssum)`, which took one coefficient step from 3.0K to 1.6K cycles.
+- **Coefficient work off the x-wait chain,** and per-row scalars hoisted out of the
+  gx epilogue (FFMA work now at its scalar minimum).
+- **A loader warp** issues the TMA stores and refills, so the gx warps never wait
+  for a store to drain. That needed one live accumulator in the epilogue to fit
+  128 registers/thread: `.reqntid 416` caps ptxas at 128, and neither
+  `--maxrregcount` nor `setmaxnreg` raises it.
+
+**The forward (-8%) is latency bound on its x ring, not bandwidth bound.** A
+per-tile timeline shows the loader refilling stage n+3 about 100 cycles after
+the pre-map of tile n ends. The chain in between is x load, producer MMA, DSMEM
+exchange, h_pre, pre-map (~8.4K cycles over 3 stages = the measured 2.8K per tile).
+The gains came from splitting the coefficient consumer so it frees the exchange
+slot and signals h_pre before its long coefficient chain, and from computing the
+sums of squares out of the A fragments already in registers.
+
+A 4th x stage fits once the exchange is single-slot, sRed uses pair reduction and
+li staging is single-buffered (254 -> 227 KB), but it does not pay. Load latency
+grows with the stages in flight (3.3K -> 4.9K -> 7.3K cycles), and the single
+exchange slot puts the 4 CTAs in lockstep. Neither a ping-pong of producer groups,
+8 pre-map warps, nor explicit ldmatrix prefetch changed the time.
+
+**Measurement pitfalls found on the way:**
+
+- The FFI compile cache was keyed by kernel name only, so A/B-ing two files of the
+  same kernel ran the first one twice. It is now keyed by the launcher too.
+- ncu's cold single launch and sustained do_bench agree once that is fixed. The
+  GPU sits at the software power cap (~540 W) under any HBM-heavy loop, a plain
+  copy included.
+
+Kernels, tools and every iteration's source are in
+`archive/mhc_opt/cute/cute_src.tar.gz` on project1. The model patch is in
+`archive/mhc_opt/pkgs_patch/cute/`.
