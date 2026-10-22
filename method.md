@@ -13,6 +13,11 @@ localization, in that order of priority. Of what we can run today,
 **long-range contact P@L on `selected_protein`** is the deciding number (see
 "How sharp each metric is"). Supervised contact, NewPISCES365 and subcell are
 not wired yet: see [plan.md](plan.md#eval-work-the-new-metrics-need).
+All five have been wired since 2026-09-12 (NewPISCES365 is scored as
+newPISCES364), and from then on the deciding contact readout is **supervised**
+long P@L, a probe on frozen attention maps; zero-shot contact is a diagnostic.
+Each metric is read against its own measured 2 sigma
+([noise floor](#noise-floor)).
 
 **Secondary:** eval loss. Diagnostic, but the only signal available while runs
 are in flight. Scored at a fixed masking recipe (15%, 80/10/10, token) with a
@@ -108,6 +113,28 @@ a common step of **10500** for loss. Downstream scores have no such correction,
 so read the step beside them and never use them to separate arms closer than
 0.010 in loss.
 
+### Wall-clock matching by a measured factor
+
+Added 2026-10-07 for Tier 2c. Letting each run's own clock stop it puts the
+node draw back into an arm-vs-base comparison, which is the noise the matching
+rule exists to remove. So an arm with overhead is matched in compute, not in
+its own wall clock:
+
+1. **Measure the step-time factor once, on one allocation**, A-B-A against the
+   base (`slurm/sbatch_seq.sh`, base legs at the start, middle and end; the
+   drift between base legs is the measurement's resolution). Use the
+   production config with instrumentation off: the per-layer debug tracker
+   charges mHC 6-12% that is not mHC's
+   ([findings](findings.md#the-debug-tracker-inflated-mhcs-overhead-factor)).
+2. **Give the arm a fixed step budget of round(13000 / factor)** and a cooldown
+   of round(2000 / factor). The step count is deterministic, so a fast or slow
+   node cannot move the result, and the comparison is still at equal compute.
+3. **An arm whose factor is under ~2% is step-matched** (ProRes, 1.016).
+
+What stays in the factor: anything the feature forces, such as mHC's
+micro-batch 64 (128 OOMs at four streams). What does not: instrumentation and
+node speed.
+
 ## Noise floor
 
 Six runs at the decided base, NorMuon 7e-3: three same-seed repeats and three
@@ -172,6 +199,22 @@ with n=7 giving the usual 0.55x-2.9x uncertainty on each sigma. Re-read of
 decisions under these floors is in results.md.
 
 ![Noise floor at equal steps](figures/noise-floor/fig_noise_floor_13k.png)
+
+**Base v2's own spread (2026-10-07).** Three seeds of base v2 (42/43/44) at
+13000 and after the decay to 15000, range rather than sigma at n=3:
+
+| metric | range @13000 | range @15000 | pre-registered 2 sigma |
+|---|---|---|---|
+| eval loss | 0.0009 | 0.0005 | 0.0019 |
+| supervised long P@L | 0.0145 | 0.0118 | 0.0141 |
+| zero-shot long P@L | 0.0142 | 0.0094 | 0.0081 |
+| PGYM total scc | 0.0089 | 0.0058 | 0.0081 |
+| newPISCES364 acc | 0.0025 | 0.0030 | 0.0027 |
+| scl acc | 0.0291 | 0.0249 | 0.0269 |
+
+Consistent with the pre-registered floors, which stay in force. Zero-shot
+contact is the exception at 13k (1.75x), so a single-seed zero-shot effect of
+~0.01 is not evidence on its own.
 
 **Sample-size caveat.** sigma_seed comes from n=4, so the 95% interval on sigma
 runs roughly 0.55x to 2.9x the estimate: 2 sigma could plausibly be anywhere
@@ -380,7 +423,7 @@ effect is 0.0028 scc against its 0.0040 threshold.
 
 What resolves it: a probe trained on frozen features, plus two confirmation
 seeds per arm at step 10500. Both are in
-[plan.md](plan.md#next-settle-the-masking-split). If the probe agrees, the base
+[plan.md](plan.md#closed-the-masking-split). If the probe agrees, the base
 moves to 100/0/0 and this entry records a delay rather than an override. If the
 gap vanishes, the zero-shot contact metric cannot referee masking-split arms at
 all, and that belongs in this file.

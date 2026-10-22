@@ -15,7 +15,12 @@ the noise floor we measured up front.
 Batch, optimizer and masking are settled. rmsnorm, swiglu and QK norm were
 adopted into the base by decision rather than by an arm each, so the baseline is
 a modernized ModernBERT and the bundle gets one comparison run against stock.
-Architecture is next.
+
+As of 2026-10-22: **base v2** (that base with rope theta 10k / 1200) is run at
+three seeds, to step 13000 and through a 2000-step decay. Position encoding and
+six of our own ideas were measured against it and **nothing was adopted**. The
+MoE redo is next, blocked on upstream PRs. Current state and order:
+[plan.md](plan.md#roadmap-as-of-2026-10-22).
 
 ## Where to look
 

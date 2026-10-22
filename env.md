@@ -57,6 +57,35 @@ near its inode limit.
   compile time, which is outside the wall-clock budget.
 - per-job TMPDIR on fscratch, and every cache redirected there.
 
+## Frozen tree patches
+
+The frozen tree is `515b9a1` plus uncommitted features
+(`fsdp_keep_unsharded_across_accum`, `moe_nan_guard`) plus in-place patches,
+each logged with its pre-patch copy and behavioural contract in
+`pkgs/nanoplm/.FROZEN_SHA`:
+
+| date | patch | contract |
+|---|---|---|
+| 2026-10-06 | `resume.mode: decay` keeps the data position (shares the `continue` restore) | `continue` unchanged; decays see the data after the trunk instead of pass 0 |
+| 2026-10-06 | mHC port: CuTeDSL and v2 Triton kernels, DeepSeek-V4 defaults (hyper-head readout, embedding copied to all streams, N(0, 0.02) coefficient init, sublayer branches return f) | inert unless `use_mhc_lite`; base model checked identical (params, init, loss, grads) |
+| 2026-10-13 | `torch.cuda.empty_cache()` after `_load_checkpoint` | numerically inert; lets NOBLE resume (see [findings](findings.md#resuming-noble-died-in-nccl-on-the-first-optimizer-step)) |
+
+The mHC port is the same code as nanoplm branch `feat/mhc-cute-dsv4`,
+uncommitted there too. None of this is upstream yet; tree v2 has to carry all
+of it ([plan](plan.md#roadmap-as-of-2026-10-22)).
+
+**The eval tree** (`eval/nanoplm-src-sync`, `a526217`) has its own local
+patches, logged in its `.LOCAL_PATCHES`: paired-head attention-map capture
+(2026-10-13) and the mHC port (2026-10-14). See
+[findings](findings.md#the-eval-tree-is-its-own-tree-and-lags-the-training-tree).
+
+**Generators** in `sep07_abl/tools/` (each refuses to write unless the config
+diff is exactly its own keys): `make_cooldown.py stable|decay` (Tier 2a to 13k
+and 15k), `make_base2_seeds.py`, `make_configs.py` (sweeps), `make_t2c_long.py`
+(long runs from the measured factors), `make_decay.py <config> <ckpt> <steps>`
+(any cooldown), `plot_t2c_long.py` (the Tier 2c figures). All need
+`ABL_OWNER` to match `OWNER.lock`.
+
 ## Evaluation
 
 `nanoplm eval` runs biotrainer's autoeval. The released biotrainer 2.0.0 cannot

@@ -548,7 +548,7 @@ which never materialises an attention matrix, so it needs an eager-attention
 path in the eval wrapper first. `pbc_supervised` and `flip` are both in
 nanoPLM's `REMOVED_FRAMEWORKS` today.
 
-So the decision is deferred rather than made, and [plan.md](plan.md#next-settle-the-masking-split)
+So the decision is deferred rather than made, and [plan.md](plan.md#closed-the-masking-split)
 carries both halves: the confirmation seeds, and the independent measurement.
 
 This tier is also the clearest case for the eval-masking fix. Before
@@ -766,3 +766,239 @@ configuration. Attention is not a smaller share of a 4-node step.
 
 **Not adopted mid-series.** Reasoning in
 [decisions.md](decisions.md#measured-and-not-adopted).
+
+## Base v2: three seeds, 13k and the decay to 15k (2026-10-07)
+
+**Base v2** is the reference every later arm is compared against: the
+modernized base (rmsnorm, swiglu, QK norm, muon LR 2e-2, AdamW-group LR 1e-4)
+with rope theta 10k global / 1200 local, 15% 80/10/10, 399.6M. Rope arm B
+(`t2a-ropeB-m92`) is exactly this config at seed 42, so it is seed 1; seeds 43
+and 44 are new runs from scratch (`make_base2_seeds.py`, jobs 2199187-8,
+`checkpoints-base2/`). `t2-mod-long` is **not** base v2: it ran the old rope
+theta (160k / 10k).
+
+Protocol, the one every arm now follows ([decisions](decisions.md#base-v2-and-the-wsd-protocol-2026-10-05)):
+constant LR to step 13000, read there (step-matched with every earlier 13k
+result), then a 2000-step 1-sqrt cooldown to `lr_decay_to_fraction` 0.1,
+continuing the data from the saved position, read at 15000.
+
+| seed | eval loss @13000 | @15000 (decayed) |
+|---|---|---|
+| 42 (rope B) | 2.1591 | 2.1249 |
+| 43 | 2.1582 | 2.1244 |
+| 44 | 2.1584 | 2.1246 |
+| **mean** | **2.1586** | **2.1246** |
+| range | 0.0009 | 0.0005 |
+
+Downstream, dev mode (seed values, then mean and range):
+
+| metric | 13000 | mean / range | 15000 | mean / range |
+|---|---|---|---|---|
+| supervised long P@L (sel) | 0.4689 / 0.4594 / 0.4544 | 0.4609 / 0.0145 | 0.4877 / 0.4876 / 0.4759 | 0.4837 / 0.0118 |
+| zero-shot long P@L (sel) | 0.4455 / 0.4313 / 0.4400 | 0.4389 / 0.0142 | 0.4655 / 0.4560 / 0.4575 | 0.4597 / 0.0094 |
+| PGYM total scc | 0.3814 / 0.3805 / 0.3725 | 0.3781 / 0.0089 | 0.3840 / 0.3886 / 0.3828 | 0.3851 / 0.0058 |
+| newPISCES364 acc | 0.8056 / 0.8065 / 0.8080 | 0.8067 / 0.0025 | 0.8105 / 0.8135 / 0.8120 | 0.8120 / 0.0030 |
+| scl acc | 0.5551 / 0.5842 / 0.5759 | 0.5717 / 0.0291 | 0.5655 / 0.5800 / 0.5904 | 0.5787 / 0.0249 |
+
+- **The loss spread is half the stock base's floor** (range 0.0009 against 2
+  sigma 0.0019), so base v2 is a tighter reference, not a looser one.
+- **The decay is worth 0.034 in loss** and lifts every downstream readout:
+  supervised contact +0.023, zero-shot +0.021, PGYM +0.007, newPISCES364 +0.005.
+- **Downstream spread is about what the stock floor said.** The ranges sit
+  roughly at the pre-registered 2 sigma (supervised 0.0141, PGYM 0.0081,
+  newPISCES364 0.0027, scl 0.0269), except zero-shot contact at 13k, whose
+  0.0142 range is 1.75x its 0.0081 threshold. n=3 is far too few to replace the
+  thresholds, so they stay as pre-registered, but a zero-shot "win" of ~0.01 is
+  inside base v2's own seed spread.
+
+## Position encoding at 13k and after the decay (2026-10-06)
+
+The seven Tier 2a arms (rope A-F and all-global) were resumed from their 10500
+checkpoints to 13000 at constant LR (`make_cooldown.py stable`, jobs
+2190206-12), then decayed 2000 steps to 15000 (`make_cooldown.py decay`, jobs
+2197708-14), the first runs on the patched decay path. All seven are seed 42,
+the same seed and data order as B, so they are read against **B** (a paired
+comparison) rather than the three-seed mean.
+
+| arm | loss @13000 | vs B | loss @15000 | vs B |
+|---|---|---|---|---|
+| **B (base: 10k / 1200)** | **2.1591** | | **2.1249** | |
+| A (10k / 10k) | 2.1587 | -0.0004 | 2.1249 | 0.0000 |
+| C | 2.1584 | -0.0007 | 2.1241 | -0.0008 |
+| D | 2.1591 | 0.0000 | 2.1254 | +0.0005 |
+| F (500 / 10k) | 2.1606 | +0.0015 | 2.1266 | +0.0017 |
+| all-global | 2.1607 | +0.0016 | 2.1268 | +0.0019 |
+| E | 2.1648 | **+0.0057** | 2.1313 | **+0.0064** |
+
+Downstream after the decay, change against B (B: supervised 0.4877, zero-shot
+0.4655, PGYM 0.3840, newPISCES364 0.8105, scl 0.5655); full values in
+[eval-table.md](eval-table.md#base-v2-and-position-encoding-at-13k-and-15k):
+
+| arm | supervised | zero-shot | PGYM | newPISCES364 | scl |
+|---|---|---|---|---|---|
+| A | -0.0003 | -0.0209 | +0.0030 | -0.0012 | +0.0145 |
+| C | +0.0001 | -0.0452 | -0.0023 | -0.0020 | +0.0021 |
+| D | -0.0133 | -0.0377 | -0.0044 | **-0.0055** | -0.0146 |
+| F | -0.0098 | -0.0119 | **-0.0084** | **-0.0099** | -0.0146 |
+| all-global | +0.0012 | -0.0090 | **-0.0096** | **-0.0028** | -0.0062 |
+| E | **-0.0572** | **-0.0678** | **-0.0122** | **-0.0145** | -0.0146 |
+
+(bold = beyond the pre-registered 2 sigma, in the losing direction; nothing
+crosses it in the winning direction.)
+
+- **Nothing beats B, at 13k or after the decay.** On the deciding readout
+  (supervised contact) A, C and all-global tie B; D, E and F lose on PGYM or
+  newPISCES364 beyond their thresholds, and E loses everywhere.
+- **The decay does not reorder anything.** It lifts every arm (B's supervised
+  long P@L 0.469 to 0.488) and keeps the 10.5k verdict: theta between 1200 and
+  160k does not matter, very low theta (E) hurts.
+- **Zero-shot contact prefers B by a wide margin** (A -0.021, C -0.045), but B
+  is also the high seed of base v2 on that readout (0.4655 against 0.4560 and
+  0.4575), and this is the readout already shown to zig-zag
+  ([findings](findings.md#rope-theta-a-clean-negative-and-the-jacobian-readout-is-the-unstable-one)).
+  Not used to decide.
+
+## Tier 2c: our own ideas on dense base v2 (2026-10-06 to 10-14)
+
+Six arms on dense base v2, each one change against it. The plan put these on
+an MoE base; they ran on dense because the MoE redo is blocked on upstream PRs,
+so they will need a re-check once an MoE base exists. Loopie and Huginn were
+not run: their loop designs are undecided and Loopie needs PR #158.
+
+| arm | change | params | note |
+|---|---|---|---|
+| paired-head | `use_paired_head_attention` | 399.6M | |
+| lambdas | `use_resid_lambdas` + `use_x0_lambdas` | 399.6M | C1+C2 as one arm |
+| ProRes | `use_prores` | 399.6M | |
+| NOBLE | `use_noble` | 433.5M | +34M (+8.5%) by design, not matched |
+| mHC sublayer | `use_mhc_lite`, `sublayers`, fused | 399.6M+ | micro-batch 64 (128 OOMs at 4 streams); DeepSeek-V4 defaults and CuTeDSL kernels |
+| mHC layer | `use_mhc_lite`, `layer`, fused | 399.6M+ | as above |
+
+### The LR sweeps, fixed-step to 5000
+
+Muon LR only (AdamW group stays 1e-4), one seed (42), `max_steps: 5000`,
+`checkpoints-t2c/`, jobs 2199216-27 and 2199243-48, plus six edge extensions
+(2204493-98) for the grids that peaked at an edge. Eval loss at 5000; the base
+reads 2.2356 at its own 2e-2.
+
+| arm | 5e-3 | 7e-3 | 1e-2 | 2e-2 | 4e-2 | 5.66e-2 | 8e-2 |
+|---|---|---|---|---|---|---|---|
+| paired-head | | | 2.2321 | **2.2281** | 2.2294 | | |
+| NOBLE | 2.2362 | 2.2315 | **2.2292** | 2.2299 | 2.2343 | | |
+| lambdas | | | 2.2354 | **2.2351** | 2.2368 | | |
+| mHC sublayer | | | 2.2388 | 2.2352 | **2.2348** | | |
+| ProRes | | | 2.2522 | 2.2476 | **2.2448** | 2.2479 | 2.2493 |
+| mHC layer | | | 2.4029 | 2.2676 | **2.2450** | 2.2451 | 2.2451 |
+
+Every grid ends with an interior optimum (mHC layer flat from 4e-2 up). The top
+two LRs of each arm went on to the long runs. Choosing among an arm's own LRs is
+a compute-neutral question, so step-matching is right there; reading these
+5000-step numbers **against the base** is not, for the arms that are slower per
+step. Interpolated to the base's training time for 5000 steps, every arm was
+behind (paired-head +0.0031, lambdas +0.0083, NOBLE +0.0209, mHC sublayer
++0.0277, mHC layer +0.0300), which is what the long runs were for.
+
+### Overhead, measured once on one allocation
+
+Wall-clock matching by letting each run's own clock stop it brings back the
+node-speed noise the matching rule exists to avoid. Instead, each arm's
+step-time factor against the base was measured once, A-B-A on one allocation,
+and every long run got a fixed step budget of round(13000 / factor), resumed from
+its 5000-step checkpoint (`make_t2c_long.py`). ProRes costs 1.6%, below the
+classification threshold, and is step-matched at 13000.
+
+| arm | factor, tracker on (2204486) | **factor, tracker off (2211398)** | budget | decay |
+|---|---|---|---|---|
+| paired-head | 1.065 | **1.065** | 12207 | 1878 |
+| lambdas | 1.085 | **1.080** | 11982 | 1852 |
+| ProRes | 1.016 | (step-matched) | 13000 | 2000 |
+| mHC layer | 1.223 | **1.177** | 11045 | 1699 |
+| mHC sublayer | 1.368 | **1.247** | 10425 | 1604 |
+| NOBLE | 1.312 | **1.311** | 9916 | 1526 |
+
+Base 1988.0 ms/step on the second allocation, drift 0.2% across its three base
+legs. The first measurement had the per-layer debug tracker on, which charges
+mHC for instrumentation on the 4x-wide residual
+([findings](findings.md#the-debug-tracker-inflated-mhcs-overhead-factor)); the
+tracker-off factors are the ones used. Paired-head and lambdas had already
+launched on the first factors (12207 and 11982 steps against corrected 12210
+and 12039, inside the measurement drift) and were not rerun. The mHC sublayer
+runs had stopped at 9503 and were extended to 10425. Micro-batch 64 is part of
+mHC's real cost and stays in its factor.
+
+The decays are scaled the same way, round(2000 / factor), so the cooldown is
+matched in wall time too: a slow arm does not get a longer cooldown than the
+base. Configs from `make_decay.py`, `checkpoints-d15k/`.
+
+### Long runs and decays, wall-clock matched
+
+Against the base v2 three-seed mean (2.1586 at 13000, 2.1246 at 15000).
+Before the decay:
+
+| arm | LR | steps | loss | vs base |
+|---|---|---|---|---|
+| paired-head | 2e-2 | 12207 | 2.1563 | **-0.0023** |
+| paired-head | 4e-2 | 12207 | 2.1571 | -0.0015 |
+| lambdas | 2e-2 | 11982 | 2.1665 | +0.0079 |
+| lambdas | 1e-2 | 11982 | 2.1679 | +0.0093 |
+| ProRes | 4e-2 | 13000 | 2.1676 | +0.0090 |
+| ProRes | 5.66e-2 | 13000 | 2.1715 | +0.0129 |
+| mHC sublayer | 4e-2 | 10425 | 2.1738 | +0.0152 |
+| mHC sublayer | 2e-2 | 10425 | 2.1755 | +0.0169 |
+| NOBLE | 2e-2 | 9916 | 2.1752 | +0.0166 |
+| NOBLE | 1e-2 | 9916 | 2.1768 | +0.0182 |
+| mHC layer | 5.66e-2 | 11045 | 2.1794 | +0.0208 |
+| mHC layer | 4e-2 | 11045 | 2.1804 | +0.0218 |
+
+After the decay:
+
+| arm | LR | steps | loss | vs base |
+|---|---|---|---|---|
+| paired-head | 2e-2 | 14085 | 2.1222 | **-0.0024** |
+| paired-head | 4e-2 | 14085 | 2.1237 | -0.0009 |
+| lambdas | 2e-2 | 13834 | 2.1314 | +0.0068 |
+| lambdas | 1e-2 | 13834 | 2.1320 | +0.0074 |
+| ProRes | 4e-2 | 15000 | 2.1402 | +0.0156 |
+| mHC sublayer | 4e-2 | 12029 | 2.1403 | +0.0157 |
+| NOBLE | 2e-2 | 11442 | 2.1409 | +0.0163 |
+| NOBLE | 1e-2 | 11442 | 2.1420 | +0.0174 |
+| mHC sublayer | 2e-2 | 12029 | 2.1421 | +0.0175 |
+| ProRes | 5.66e-2 | 15000 | 2.1429 | +0.0183 |
+| mHC layer | 5.66e-2 | 12744 | 2.1439 | +0.0193 |
+| mHC layer | 4e-2 | 12744 | 2.1456 | +0.0210 |
+
+Every readout, both phases, as the change against base v2 (shaded = the
+pre-registered 2 sigma; filled = outside it):
+
+![Tier 2c before the decay](figures/ideas/fig_t2c_before_decay.png)
+
+![Tier 2c after the decay](figures/ideas/fig_t2c_after_decay.png)
+
+Figures from `sep07_abl/tools/plot_t2c_long.py` on fscratch, which reads the
+training logs and the autoeval reports directly. Full downstream values in
+[eval-table.md](eval-table.md#tier-2c-our-own-ideas-on-dense-base-v2).
+
+### Verdict: nothing adopted
+
+- **Paired-head is the only loss win**, -0.0024 after the decay at 2e-2, just
+  past the 0.0019 floor, at one seed. Downstream it ties on everything at 2e-2
+  (supervised -0.004, zero-shot -0.007, PGYM -0.005, newPISCES364 +0.001), and
+  at 4e-2 it loses zero-shot and newPISCES364. **Not adopted** (decided
+  2026-10-22). What the numbers support: a single-seed loss margin of 1.3x the
+  floor, no downstream gain, and a 6.5% slower step.
+- **Lambdas** cost +0.007 in loss. At 1e-2 zero-shot contact reads +0.010,
+  which is about base v2's own seed range on that readout (0.0094), against
+  -0.006 newPISCES364 and -0.049 scl. At 2e-2 it ties downstream. Not adopted.
+- **ProRes loses even step-matched** (+0.016 after the decay), so its problem
+  is not speed. At 5.66e-2 it collapsed contact before the decay (supervised
+  -0.28, zero-shot -0.32, newPISCES364 -0.07) with a normal-looking loss
+  (+0.013), and the decay mostly repaired it (-0.037 / -0.053); a second case
+  of loss being blind to a structural collapse
+  ([findings](findings.md#prores-at-566e-2-collapses-contact-while-loss-stays-normal)).
+- **NOBLE, mHC sublayer and mHC layer** all lose 0.016-0.021 in loss and most
+  downstream readouts at equal wall clock. In step-matched terms at 5000 NOBLE
+  and mHC sublayer were ahead or level; their per-step cost is what loses. mHC
+  sublayer holds supervised contact and scl but loses PGYM by 0.011-0.014. mHC
+  layer is worst on contact, and its LR grid behaved oddly (1e-2 far behind,
+  flat from 4e-2 up), which may be the DeepSeek-V4 init suiting sublayer
+  wrapping rather than layer wrapping.

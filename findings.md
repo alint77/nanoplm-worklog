@@ -1742,7 +1742,7 @@ populates fields in the saved `training_state.json` and does not touch the
 training math, so arms either side of it stay comparable. One checkpoint was
 already written without the position: the 2e-2 modernization sweep winner, whose
 long run therefore re-sees 96 steps of epoch-2 data. Logged in
-[plan.md](plan.md#now-the-modernized-base).
+[plan.md](plan.md#done-the-modernized-base).
 
 ## A resumed run writes into the source run's directory unless you move ckp_dir
 
@@ -2206,3 +2206,102 @@ exchange slot puts the 4 CTAs in lockstep. Neither a ping-pong of producer group
 Kernels, tools and every iteration's source are in
 `archive/mhc_opt/cute/cute_src.tar.gz` on project1. The model patch is in
 `archive/mhc_opt/pkgs_patch/cute/`.
+
+## The debug tracker inflated mHC's overhead factor
+
+The first overhead measurement for Tier 2c (job 2204486) ran every config with
+`debug_layerwise_metrics: true`, as every series run does, and charged mHC
+sublayer +36.8% and mHC layer +22.3%, against +24% in the earlier mHC smoke. The
+tracker's forward hooks run on the 4x-wide residual and force a graph break at
+each of the 64 sublayer blocks, so under mHC it costs far more than on the base.
+Re-measured with the tracker off in every config (job 2211398, base drift 0.2%):
+sublayer 1.247, layer 1.177, while the dense arms barely moved (lambdas 1.085 to
+1.080, paired-head and NOBLE unchanged). **Measure overhead factors on the
+production config, instrumentation off.** The tracker stays on in the training
+runs themselves; it costs time, not steps, and the budgets are in steps.
+
+## ProRes at 5.66e-2 collapses contact while loss stays normal
+
+At 13000 steps (constant LR), ProRes 5.66e-2 reads loss +0.013 against base v2,
+in line with ProRes 4e-2 (+0.009), but supervised long P@L 0.18 against 0.46,
+zero-shot 0.12 against 0.44, newPISCES364 -0.07 and scl -0.11. PGYM is barely
+touched (-0.006). After the 2000-step decay the contact readouts mostly recover
+(-0.037 supervised, -0.053 zero-shot) while loss stays +0.018. Same pattern as
+the [arm where loss and structure disagree](results.md#one-arm-where-loss-and-structure-disagree):
+val loss can be blind to a collapse in what the attention maps encode. Not
+diagnosed further since ProRes loses anyway; the plausible suspect is the
+attention maps degenerating at the higher LR under ProRes's residual scaling.
+Another reason to keep a contact readout on every arm and not screen on loss.
+
+## Decay mode reads its LR floor from the resume section
+
+The first seven cooldowns (jobs 2196007-13) died at startup with `resume decay
+requires lr_decay_to_fraction`. The decay scheduler reads the floor from
+`resume.lr_decay_to_fraction`, not from `pretraining.lr_decay_to_fraction`
+where the base sets it. Loading the config did not catch it; only building the
+scheduler does. `make_cooldown.py` and `make_decay.py` now copy the floor into
+the resume section. Verified by running the exact scheduler path: 1-sqrt from
+2e-2 to 2e-3 over 2000 steps.
+
+## Resuming NOBLE died in NCCL on the first optimizer step
+
+Both NOBLE long runs (jobs 2220310/11) died within 3 min of resuming with `NCCL
+Error 1: unhandled cuda error` in the optimizer's alltoall. NOBLE trains at
+91.5 of 94 GB, and `_load_checkpoint` puts the full, unsharded model and
+optimizer state dicts on the GPU; their blocks stayed in PyTorch's caching
+allocator, leaving NCCL's own cudaMallocs no room. Fixed in the frozen tree
+(2026-10-13) with one `torch.cuda.empty_cache()` after the load, numerically
+inert; the resubmits (2307887/90) ran to completion. Every other arm resumed
+fine because it had more headroom.
+
+## Job configs and worklists need absolute paths
+
+Two failures from one cause on 2026-10-14. Six decay configs were generated
+with relative checkpoint paths, and the runs died in 2 min with `Checkpoint
+directory does not exist`; the job does not run from the directory the path was
+relative to. An eval array got a relative worklist, and `sbatch_eval.sh`
+changes into `run/` before reading it, so every task read an empty list and
+exited "done" in a minute. `make_decay.py` now resolves the checkpoint path, and
+`sbatch_eval.sh` resolves the worklist and refuses to start without it.
+
+## The eval tree is its own tree, and lags the training tree
+
+Evals run from `eval/nanoplm-src-sync`, not the frozen training tree. Two gaps
+showed up in Tier 2c, both fixed there and logged in its `.LOCAL_PATCHES`:
+
+- **mHC checkpoints failed strict load** (`Unexpected key(s): model.mhc_head.*`):
+  the mHC port had gone into the frozen tree only. Synced 2026-10-14 by applying
+  the frozen tree's port diff; both mHC variants load and the mHC tests pass
+  there.
+- **Paired-head had no supervised contact:** the attention-probability capture
+  raised `NotImplementedError` for paired heads. A pair attends over 2S
+  interleaved positions (token i, head slot a at 2i + a); the capture now folds
+  that into one (S, S) map per original head, the slot-a query rows with the key
+  mass summed over both slots of each token, so rows still sum to 1 and the
+  probe sees as many maps as on a plain model. Tested against what SDPA
+  computed. This is a choice about how paired-head maps are presented to the
+  probe, and the paired-head supervised numbers depend on it.
+
+Any training-side model change needs the same change in the eval tree before
+its checkpoints are scored.
+
+## Four evals per node can silently drop one eval's supervised half
+
+In two eval arrays (2316587, 4 evals per node), one eval per node exited after
+its zero-shot stage with exit code 0 and no traceback, so the wrapper logged no
+failure and the report simply lacked the supervised frameworks. Each node
+peaked near 78 GB of host memory under `--membind` to its local NUMA node, so
+memory pressure is the likely cause; not confirmed. Rerunning those two alone
+worked, and a later array at 4 per node had no drops. **After every eval array,
+check that each report has all four frameworks**, not just that the job
+completed. Note that `sbatch_eval.sh` assigns worklist lines to array task
+`line // 4`, so a larger `--array` does not spread a short worklist thinner.
+
+## A failed eval leaves embedding files that break the rerun
+
+Re-evaluating a checkpoint whose first eval died mid-supervised failed with
+`Unable to synchronously create dataset (name already exists)`: biotrainer
+found the partial `embeddings_file_<name>.h5` and tried to write into it. Move
+the stale `embeddings_file_*`, `reduced_embeddings_file_*` and per-arm
+framework directories aside before rerunning (done for the paired-head
+re-evals, `eval/out/stale-*`).

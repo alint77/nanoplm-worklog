@@ -3,13 +3,52 @@
 What is left to run. Done work is in [results.md](results.md); the matching and
 threshold rules are in [method.md](method.md).
 
-Every architecture arm: 6 h stable phase, 4 nodes, 16 GH200, 4.19M tokens/step
-(grad_accum 4), ~10,568 steps, ~44.3B tokens, about 96 GPU-hours. Compute-neutral
-arms run fixed-step instead. Each arm changes exactly one thing from the base and
-runs at **3 LRs** (0.5x / 1x / 2x its expected optimum), 1 seed. The LR curve is
-the robustness check: an arm that only wins at one LR did not win.
+Every arm since 2026-10-05: 4 nodes, 16 GH200, 4.19M tokens/step (grad_accum
+4), constant LR to step 13000 (54.5B tokens), then a 2000-step 1-sqrt cooldown,
+read at both points. Compute-neutral arms are step-matched; arms with step-time
+overhead get round(13000 / f) and round(2000 / f) steps, f measured once on one
+allocation ([method.md](method.md#wall-clock-matching-by-a-measured-factor)).
+Each arm changes exactly one thing from base v2 and gets a 3-LR fixed-step sweep
+at 5000 steps first, extended at any edge; the top two LRs go to the long run.
 
-## In flight (2026-09-25): batch size at the real horizon, and optimizer follow-ups
+## Roadmap (as of 2026-10-22)
+
+Designed 2026-09-26, with the team's notes of 2026-09-29 and 2026-10-05
+applied. The first sections below this one are the record of earlier stages.
+
+| stage | what | status |
+|---|---|---|
+| 0 | measurement: noise floors per metric at 13k (n=7), eval battery, dev mode | done |
+| 1 | shape (h1024 / L32, 399.6M) and batch (4.19M, confirmed at 44B) | done |
+| 2 | optimizer recipe (NorMuon, wd 1e-5; knobs kept as measured at 30% masking) | done |
+| 3 | modernization (rmsnorm, swiglu, QK norm; LR 2e-2 confirmed at 44B) | done |
+| 3b | **base v2**: 3 seeds, 13k + decay | **done** 2026-10-07 ([results](results.md#base-v2-three-seeds-13k-and-the-decay-to-15k-2026-10-07)) |
+| 4a | position encoding: rope theta (6 arms), all-global, at 13k + decay | **done, negative** ([results](results.md#position-encoding-at-13k-and-after-the-decay-2026-10-06)) |
+| 4d | our own ideas (Tier 2c), 6 arms on **dense** base v2 | **done, nothing adopted** 2026-10-22 ([results](results.md#tier-2c-our-own-ideas-on-dense-base-v2-2026-10-06-to-10-14)) |
+| 4b | MoE redo on base v2: pick the cell, which becomes base v3 | **blocked**: waits on upstream PRs #154 / #156, then a tree-v2 freeze and parity check |
+| 4c | canon (kernel 7, mode x layer set), on the MoE base | not started; after 4b |
+| 4e | Loopie and Huginn | held: loop designs undecided; Loopie needs PR #158 |
+| 5 | greedy ladder + light leave-one-out, with the stage-2 knobs re-checked (AdamW-group LR 1e-2, wd 1e-5) | after 4b/4c; no Tier 2a/2c arm qualifies for it |
+| 6 | second-scale check | struck by team decision |
+| 7 | final model with decay, top-2 LRs, full-mode eval, against ESM-2 and ESM C | last |
+
+**Order.** The 2026-09-29 call puts canon and our own ideas on top of the MoE
+base. Our own ideas ran on dense instead (2026-10-06) so that work would not
+wait on the PRs; none of them won there, so a re-check on the MoE base is only
+owed for whatever the team still wants to carry.
+
+**What tree v2 needs before 4b.** The frozen tree carries features that are in
+no upstream commit (`fsdp_keep_unsharded_across_accum`, `moe_nan_guard`) and
+three in-place patches (decay data position, the mHC port, the post-resume
+`empty_cache`, see [env.md](env.md#frozen-tree-patches)). Tree v2 has to
+contain all of them, and base v2 gets one parity run on it (same config and
+seed, losses within run-to-run noise) before any MoE arm is compared against it.
+
+**Housekeeping.** The 2026-10-06 to 10-14 checkpoints on fscratch fall to the
+one-month purge from about 2026-11-06. Archive what the paper needs (base v2
+seeds, the Tier 2a and 2c endpoints and decays) to project1 before then.
+
+## Done (2026-09-25): batch size at the real horizon, and optimizer follow-ups
 
 **Batch size to 44B tokens.** Tier 0b compared batches at 10.07B tokens only
 (a ~1.4 h token-matched probe, by design), and the 4.19M choice took its 0.0114
@@ -68,7 +107,7 @@ all read against the 13k NorMuon control (2.1936):
 - cautious WD + WD 1e-5 together: ~2.187 if they are one effect (wd1e-5 alone
   2.1870, cautious alone 2.1900), ~2.183 if additive.
 
-## Now: the modernized base
+## Done: the modernized base
 
 Two things, in this order, before any Tier 2 arm runs.
 
@@ -346,6 +385,10 @@ on all eight others, while costing more wall clock. Tier 2a is therefore closed
 with the base unchanged on both knobs. Table and reasoning in
 [findings.md](findings.md#all-global-attention-worse-or-tied-on-everything-and-not-adopted).
 
+**At 13k and after the decay (2026-10-07):** all seven arms continued to 13000
+and decayed to 15000. Same verdict: nothing beats B, E loses everywhere.
+[results.md](results.md#position-encoding-at-13k-and-after-the-decay-2026-10-06).
+
 ## Tier 2b: MoE and canon layers
 
 **MoE**, matched active parameters, swiglu (now the base, and also forced:
@@ -435,6 +478,13 @@ flagged, so these arms now run on the CuTe path they were designed for.
 
 ## Tier 2c: our own ideas (24 short + 8 long)
 
+**Done 2026-10-14, nothing adopted.** Ran 6 of the 8 arms (no Loopie, no
+Huginn) on dense base v2: 24 sweep runs at 5000 steps (18 + 6 edge
+extensions), then the top two LRs per arm resumed to round(13000 / f) and
+decayed round(2000 / f). Results and verdict in
+[results.md](results.md#tier-2c-our-own-ideas-on-dense-base-v2-2026-10-06-to-10-14).
+The original design follows.
+
 Each arm gets a short fixed-step LR sweep, then one longer wall-clock-matched
 run at its best LR.
 
@@ -495,6 +545,10 @@ chosen at 400M and its critical batch moves with scale.
 
 ## The decay campaign
 
+**Superseded 2026-10-05** by the WSD protocol at the top of this file: every
+arm decays 2000 steps (or 2000 / f) from 13000, 1-sqrt to 0.1, continuing the
+data position. The original design follows.
+
 The ladder runs `lr_schedule: warmup_stable` only. Decay is a separate campaign
 later, `resume.mode: decay` from the saved checkpoints, annealing to
 `lr_decay_to_fraction`. Deliberately not chained with `--dependency=afterok`: a
@@ -515,6 +569,8 @@ revisiting now that it is no longer locked to the stable runs.
 
 ## Budget
 
+Pre-roadmap budget, kept for the record; the roadmap above is current.
+
 | item | runs | note |
 |---|---|---|
 | LR re-sweep on the new base | 7 | fixed-step 5000, blocks everything below |
@@ -532,6 +588,16 @@ folding six Tier 2a arms into the base. The tiers are ordered so cutting from
 the bottom of 2c costs the least.
 
 ## Still open
+
+- **Decide what, if anything, of Tier 2c is re-checked on the MoE base.**
+  Paired-head was the only loss win (-0.0024, one seed, downstream tied) and is
+  not going into the base.
+- **mHC layer's LR grid looked off** (1e-2 far behind, flat from 4e-2 up). The
+  DeepSeek-V4 init may suit sublayer wrapping rather than layer wrapping; worth
+  a look before any mHC re-run.
+- **The eval tree must track the training tree.** Any model change has to be
+  mirrored in `eval/nanoplm-src-sync` before its checkpoints are scored
+  ([findings](findings.md#the-eval-tree-is-its-own-tree-and-lags-the-training-tree)).
 
 - **Development-mode aggregation is now the standard**, so the earlier note
   that a full-mode run was owed is retired. What is owed instead is a

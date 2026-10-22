@@ -11,20 +11,24 @@ What we chose, and the number that decided it. Measurements live in
 | shape | h1024 / L32 / 16 heads / 2688 MLP = 399.6M | MFU ladder, below |
 | global batch | 4.19M tokens (grad_accum 4 at 16 GPUs) | Tier 0b, below |
 | optimizer | NorMuon, `adjust_lr: spectral_norm` | -0.0289 over tuned AdamW |
-| muon LR | 7e-3 | interior minimum, three times |
+| muon LR | 7e-3 stock; **2e-2 on the modernized base** | interior minimum three times on stock; 2e-2 re-swept on the new base and confirmed at 44B |
+| AdamW-group LR (embeddings, unembedding, norms) | 1e-4 | kept as measured; 1e-2 deferred to the ladder (2026-10-06) |
 | muon weight decay | 1e-5 (dion ships 0.01) | -0.0050 |
 | muon beta2 / cautious / nesterov | 0.95 / off / off | all ties, library defaults kept |
 | MLM | 15% masking, 80/10/10 split, token | best 80/10/10 cell downstream; split closed at 80/10/10 (2026-09-25) |
 | norm | rmsnorm | adopted, not measured (below) |
 | activation | swiglu | adopted, not measured (below) |
 | QK norm | on | adopted, not measured (below) |
+| rope theta | 10k global / 1200 local | arm B; confirmed at 13k and after the decay |
+| schedule | WSD: constant to 13000, 2000-step 1-sqrt cooldown to 0.1 | protocol, 2026-10-05 (below) |
 | canon kernel | size 7 | prior kernel work, see the canon benchmarks |
 | eval masking | pinned 15%, 80/10/10, fixed seed | see below |
 | precision | bf16, one fp8 pair at the end | below |
 | corpus | UniRef50 only | below |
 
-Open: everything architectural. That is what the remaining tiers are for
-([plan.md](plan.md)).
+This recipe at seed 42/43/44 is **base v2**, the reference every later arm is
+compared against (below). Tier 2a (position encoding) and Tier 2c (our own
+ideas) adopted nothing. Open: MoE, canon, the ladder ([plan.md](plan.md)).
 
 ## Decisions of 2026-09-26
 
@@ -38,6 +42,33 @@ Open: everything architectural. That is what the remaining tiers are for
   arm from here on: numerically identical, -9% MoE / -2% dense step time. Arms
   before this point ran without it; fixed-step comparisons are unaffected, and
   the GPU-hour reading is only compared within the post-change set.
+
+## Base v2 and the WSD protocol (2026-10-05)
+
+- **Base v2 = rope arm B's config** at three seeds: `t2a-ropeB-m92` (seed 42)
+  plus `base2-seed43` and `base2-seed44` from scratch. Not `t2-mod-long`, which
+  ran the old rope theta. Seeds 43/44 pair each new run with a stock noise-floor
+  run of the same initialization and data order. Result: loss range 0.0009 at
+  13k and 0.0005 after the decay
+  ([results](results.md#base-v2-three-seeds-13k-and-the-decay-to-15k-2026-10-07)).
+- **Every arm trains to 13000 at constant LR, then decays 2000 steps** (1-sqrt
+  to `lr_decay_to_fraction` 0.1), and is read at both points. 13000 keeps the
+  stable reading step-matched with every earlier 13k result (Tier 1a/1b, the
+  noise floor); the decayed reading is what a shipped model looks like. The
+  cooldown continues the data from the saved position (frozen-tree patch of
+  2026-10-06), so it never retrains on data the arm has already seen.
+- **Matching, restated by the team:** compute-neutral changes (LR sweeps, rope
+  theta, seeds) are step-matched, to keep node-to-node speed out of the
+  comparison; changes with step-time overhead (mHC, NOBLE, MoE) are wall-clock
+  matched. Implemented without node noise: the overhead factor is measured once
+  on one allocation (A-B-A), and the arm gets a fixed budget of
+  round(13000 / factor) steps and a cooldown of round(2000 / factor). Details in
+  [method.md](method.md#wall-clock-matching-by-a-measured-factor).
+- **AdamW-group LR stays 1e-4** (2026-10-06). 1e-2 gave -0.0034 at 13k with no
+  downstream cost on the stock base, but adopting it would have voided rope B as
+  seed 42 of base v2. It goes into the ladder instead.
+- **Our own ideas ran on dense base v2 now** rather than waiting for the MoE
+  base (2026-10-06), so they need a re-check once MoE is in.
 
 ## The series
 
@@ -116,7 +147,7 @@ held up on one worry: the 10% random tokens train substitution robustness, and
 the categorical Jacobian measures substitution sensitivity, so the benchmark may
 be rewarding a twitchier model rather than a better one. Every zero-shot metric
 we have shares that confound, so settling it needs a probe on frozen features.
-Both halves are in [plan.md](plan.md#next-settle-the-masking-split);
+Both halves are in [plan.md](plan.md#closed-the-masking-split);
 the base keeps 80/10/10 until then.
 
 **Eval masking pinned and deterministic.** Eval used to inherit the whole
@@ -254,7 +285,7 @@ modernization is worth" without claiming to decompose it.
 
 Consequence that is not optional: the new base changes compute per step, so the
 learning rate has to be re-swept on it before any Tier 2 comparison, per the
-matching rule. See [plan.md](plan.md#now-the-modernized-base).
+matching rule. See [plan.md](plan.md#done-the-modernized-base).
 
 ## Runtime
 
@@ -311,6 +342,30 @@ matter, not that 10k/1200 is better.
 No LR sweep for the new base: RoPE is a rotation, it preserves `||q||` and
 `||k||`, and QK norm is applied after it, so the logit scale that sets the LR
 ceiling is untouched. 2e-2 carries over.
+
+**Confirmed at 13k and after the decay (2026-10-07).** All seven Tier 2a arms
+were continued to 13000 and decayed to 15000: nothing beats B on loss or on the
+deciding readout, and E (very low theta) loses everywhere
+([results](results.md#position-encoding-at-13k-and-after-the-decay-2026-10-06)).
+
+## Tier 2c: nothing adopted (2026-10-22)
+
+Six of our own ideas on dense base v2, LR-swept and then run wall-clock matched
+to 13000/f with a scaled decay
+([results](results.md#tier-2c-our-own-ideas-on-dense-base-v2-2026-10-06-to-10-14)).
+
+| arm | after the decay, vs base v2 | decision |
+|---|---|---|
+| paired-head | loss -0.0024 (2e-2), downstream tied | **not adopted** (decided 2026-10-22) |
+| lambdas (resid + x0) | loss +0.007, downstream tied or mixed | not adopted |
+| ProRes | loss +0.016 even step-matched | not adopted |
+| NOBLE | loss +0.016, +8.5% params | not adopted |
+| mHC sublayer | loss +0.016, PGYM -0.011 to -0.014 | not adopted |
+| mHC layer | loss +0.019, worst on contact | not adopted |
+
+Base v2 carries forward unchanged. Loopie and Huginn were not run (designs
+undecided, Loopie blocked on PR #158), and every Tier 2c result is on a dense
+base, so a re-check is owed if an MoE base is adopted.
 
 ## Measured and not adopted
 
