@@ -74,6 +74,13 @@ The mHC port is the same code as nanoplm branch `feat/mhc-cute-dsv4`,
 uncommitted there too. None of this is upstream yet; tree v2 has to carry all
 of it ([plan](plan.md#roadmap-as-of-2026-10-22)).
 
+**Tree v2 (2026-10-26)** is upstream master `7fbb03a`, which contains all of the
+above, frozen at `pkgs/nanoplm-v2` (read-only `src`, `.FROZEN_SHA`). The venv's
+editable install still points at tree v1; `sbatch --export=ALL,NANOPLM_TREE=nanoplm-v2`
+makes `slurm/sbatch_run.sh` put tree v2 first on `PYTHONPATH` and print the tree
+and sha in the log. Stage 4b onward runs on tree v2
+([parity](results.md#tree-v2-parity-and-the-moe-step-time-factors-2026-10-26)).
+
 **The eval tree** (`eval/nanoplm-src-sync`, `a526217`) has its own local
 patches, logged in its `.LOCAL_PATCHES`: paired-head attention-map capture
 (2026-10-13) and the mHC port (2026-10-14). See

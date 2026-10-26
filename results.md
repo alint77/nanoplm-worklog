@@ -1002,3 +1002,60 @@ training logs and the autoeval reports directly. Full downstream values in
   layer is worst on contact, and its LR grid behaved oddly (1e-2 far behind,
   flat from 4e-2 up), which may be the DeepSeek-V4 init suiting sublayer
   wrapping rather than layer wrapping.
+
+## Tree v2 parity and the MoE step-time factors (2026-10-26)
+
+**Tree v2** is upstream `peymanvahidi/nanoplm` master `7fbb03a` (PRs #164-#167
+merged 2026-10-26, which carry every frozen-tree patch: decay keeps the data
+position, `empty_cache` after resume, `moe_nan_guard`, the mHC port), frozen at
+`sep07_abl/pkgs/nanoplm-v2`. Runs select it with
+`sbatch --export=ALL,NANOPLM_TREE=nanoplm-v2`; unset is tree v1, so every earlier
+run is reproducible as before. `fsdp_keep_unsharded_across_accum` is gone as a
+key: it is the default upstream (#159).
+
+**Parity: passes.** Base v2 seed 42 (`t2a-ropeB-m92`, unchanged config) on tree
+v2 for 3000 steps (job 2528654), against the same seed on tree v1 and seeds
+43/44 as the noise reference (`tools/parity_v2.py`):
+
+| step | v1 s42 | v1 s43 | v1 s44 | **v2 s42** | v2 - v1 s42 | v2 - v1 mean, z |
+|---|---|---|---|---|---|---|
+| 500 | 2.4773 | 2.4752 | 2.4760 | 2.4757 | -0.0016 | -0.54 |
+| 1000 | 2.3887 | 2.3874 | 2.3874 | 2.3884 | -0.0003 | +0.66 |
+| 1500 | 2.3460 | 2.3447 | 2.3446 | 2.3460 | +0.0000 | +1.05 |
+| 2000 | 2.3179 | 2.3170 | 2.3166 | 2.3182 | +0.0003 | +1.21 |
+| 2500 | 2.2974 | 2.2964 | 2.2960 | 2.2977 | +0.0003 | +1.28 |
+| 3000 | 2.2803 | 2.2799 | 2.2800 | 2.2809 | +0.0006 | +0.97 |
+
+z uses the pooled seed sd over these six evals (0.00074) times sqrt(4/3). Every
+difference is inside 2 x sigma_seed (0.0019), and v2 sits closer to v1 seed 42 than
+seeds 43/44 do: the train loss follows seed 42's wiggles step for step, because
+the data order is identical and only kernel-level numerics changed (steps 40-200
+agree to 0.0006). Tree v2 is also faster: 1889 vs 1931 ms/step here with the debug
+tracker on, 1845 vs 1988 ms with it off (ovh3 against ovh2).
+
+![tree v2 parity](figures/treev2-parity.png)
+
+**MoE step-time factors** (job 2528655, one allocation, tree v2, debug tracker off,
+dense first and last, 250 steps each, median dt over steps >= 100; dense 1841.2 /
+1849.0 ms, drift 0.42%). The reference is tree-v2 dense, so MoE gets no credit for
+the tree speedup:
+
+| cell | ms/step | f | trunk round(13000/f) | decay round(2000/f) |
+|---|---|---|---|---|
+| g4-S8 | 2276 | 1.234 | 10539 | 1621 |
+| g4-S12 | 2332 | 1.264 | 10287 | 1583 |
+| g7-S8 | 2360 | 1.279 | 10164 | 1564 |
+| g7-S12 | 2432 | 1.318 | 9862 | 1517 |
+
+**Launched** 2026-10-26, ungated, `moe_nan_guard` on, configs `moe2-<cell>`
+(from `configs/base2v2.yaml` via `make_configs.py`), each decay chained afterok
+behind its trunk by `slurm/sbatch_decay_chain.sh` (which runs `make_decay.py`
+inside the allocation once the trunk checkpoint exists; tested end to end on a
+smoke, job 2529016): g4-S8 2530496/2530497, g4-S12 2530498/2530499, g7-S8
+2530500/2530501, g7-S12 2530502/2530503. They are compared against dense base v2
+at 15k (2.1249 / 2.1244 / 2.1246); a cell wins only by more than 2 x sigma_seed.
+
+**Archive.** The 2026-10-06 to 10-14 weights (base2, d15k, t2a13k/15k, t2c,
+t2c-long; 66 runs) are on project1 under `archive/sep07_abl/weights`, each
+`cmp`-verified, plus `meta-2026-10-26.tar` (logs, configs, slurm, tools).
+
