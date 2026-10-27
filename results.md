@@ -1059,3 +1059,82 @@ at 15k (2.1249 / 2.1244 / 2.1246); a cell wins only by more than 2 x sigma_seed.
 t2c-long; 66 runs) are on project1 under `archive/sep07_abl/weights`, each
 `cmp`-verified, plus `meta-2026-10-26.tar` (logs, configs, slurm, tools).
 
+
+## Stage 4b result: MoE g4-S12 becomes base v3 (2026-10-27)
+
+**Loss, wall-clock matched** (trunk at 13k-equivalent, decay to 15k-equivalent;
+dense base v2 is the 3-seed mean, 2 x sigma_seed = 0.0019):
+
+| cell | E, top_k, inter | f | trunk eval | decayed eval | decayed - dense |
+|---|---|---|---|---|---|
+| dense base v2 | | 1 | 2.1586 | 2.1246 | |
+| g4-S8 | 31, 3, 672 | 1.234 | 2.1202 | 2.0833 | -0.0413 |
+| **g4-S12** | 47, 3, 672 | 1.264 | 2.1134 | **2.0752** | **-0.0494** |
+| g7-S8 | 55, 6, 384 | 1.279 | 2.1205 | 2.0840 | -0.0406 |
+| g7-S12 | 83, 6, 384 | 1.318 | diverged at step 7212 | | |
+
+Every surviving cell beats dense by about 20 sigma. g4-S12 beats the next cell by
+0.0081, so there is no tie and the smallest-f tie rule never fires. **g4-S12 is
+base v3** (`configs/base3.yaml`).
+
+![stage 4b](figures/stage4b-moe.png)
+
+**g7-S12 diverged.** At step 7212 `layers.3.mlp.Wo` went non-finite one step after
+a finite loss and a finite gradient, so the update itself overflowed, not the
+forward. The run had no periodic checkpoints, its decay was cancelled by the
+afterok chain, and stage 4c was told to exclude it (`FOURC_EXCLUDE`, amendment
+2026-10-27). Root cause unknown; the suspect is the batched NorMuon update on the
+3D expert weights (layer 3 is the first MoE layer). It is the largest expert count
+(83) we have run. The same update path runs in base v3 and the canon arms, so the
+risk is not zero there either.
+
+**Downstream at 15k-equivalent** (MoE minus the dense 3-seed mean, both scored on
+the new eval stack below; * = beyond that metric's 2 sigma):
+
+| metric (2 sigma) | g4-S8 | g4-S12 | g7-S8 |
+|---|---|---|---|
+| supervised long P@L (0.0141) | +0.003 | +0.006 | +0.011 |
+| PGYM scc (0.0081) | -0.001 | +0.013* | +0.012* |
+| newPISCES364 (0.0027) | +0.004* | +0.005* | +0.002 |
+| scl (0.0269) | +0.018 | +0.001 | -0.007 |
+| zero-shot long P@L (0.0081) | -0.031* | -0.052* | -0.057* |
+
+Supervised metrics follow the loss: flat to better, with PGYM and newPISCES
+significant for base v3. **Zero-shot contact collapses under MoE**, and more so
+for the cells with more experts (g4-S8 -0.031, g4-S12 -0.052, g7-S8 -0.057). The
+zero-shot probe reads contacts off the categorical Jacobian (substitute residue i,
+watch the logits at j); our hypothesis is that a substitution can flip the router's
+expert choice at other positions, which adds noise to the Jacobian that has nothing
+to do with contacts. Untested. It does not change the pick (the protocol ranks on
+loss), but zero-shot contact should not be read as a quality signal for MoE
+models without checking this.
+
+**New eval stack.** Tree v2 requires biotrainer 2.1.1 (`pydeps-bt211`), whose dev
+mode is defined by a `pbc_dev_mode` column in a new PGYM reference file, so the
+cached datasets had to be rebuilt (`eval/data-bt211`, reports in
+`eval/out-bt211`, env in `eval/tools/env-bt211.txt`). The report schema changed
+too (`§dev` suffixes, `PBC_ZEROSHOT_CONTACT-` prefixes, `task_results`);
+`collect_results.py` reads both. Numbers on the two stacks are **not
+comparable**: base v2 re-scored on the new one moves PGYM +0.03, supervised
+contact +0.010 to +0.024, zero-shot contact +0.013 to +0.020, with newPISCES and
+scl unchanged. Everything from 4b on is scored on the new stack, with dense base v2
+re-scored as the reference.
+
+## Stage 4c launched: canon on base v3 (2026-10-27)
+
+Driver job 2539968 picked base v3 from the 4b decay logs, measured the canon
+factors A-B-A against base v3 on one allocation (base3 2388.9 / 2396.7 ms, drift
+0.33%), and submitted four arms, each with its decay chained. Canon is kernel 7,
+CuTe backend, at sites A/B/C only: D sits inside the MLP, so on an MoE model it
+would reach only the shared expert and the two leading dense layers.
+
+| arm | f vs base v3 | trunk + decay steps | trunk job | decay job |
+|---|---|---|---|---|
+| a | 1.035 | 9941 + 1530 | 2540329 | 2540330 |
+| c | 1.033 | 9959 + 1532 | 2540331 | 2540332 |
+| ac | 1.105 | 9307 + 1432 | 2540333 | 2540334 |
+| abc | 1.164 | 8834 + 1359 | 2540335 | 2540336 |
+
+Steps are base v3's own budget (10287 + 1583) divided by f, so each arm gets the
+same wall-clock as base v3. An arm is adopted only if its decayed loss beats base
+v3 (2.0752) by more than 0.0019.

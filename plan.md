@@ -25,8 +25,8 @@ applied. The first sections below this one are the record of earlier stages.
 | 3b | **base v2**: 3 seeds, 13k + decay | **done** 2026-10-07 ([results](results.md#base-v2-three-seeds-13k-and-the-decay-to-15k-2026-10-07)) |
 | 4a | position encoding: rope theta (6 arms), all-global, at 13k + decay | **done, negative** ([results](results.md#position-encoding-at-13k-and-after-the-decay-2026-10-06)) |
 | 4d | our own ideas (Tier 2c), 6 arms on **dense** base v2 | **done, nothing adopted** 2026-10-22 ([results](results.md#tier-2c-our-own-ideas-on-dense-base-v2-2026-10-06-to-10-14)) |
-| 4b | MoE redo on base v2: pick the cell, which becomes base v3 | **running** 2026-10-26: tree v2 frozen, parity passed, 4 cells wall-clock matched ([results](results.md#tree-v2-parity-and-the-moe-step-time-factors-2026-10-26)) |
-| 4c | canon (kernel 7, mode x layer set), on the MoE base | not started; after 4b |
+| 4b | MoE redo on base v2: pick the cell, which becomes base v3 | **done** 2026-10-27: **g4-S12 is base v3** (2.0752 vs dense 2.1246); g7-S12 diverged; zero-shot contact drops under MoE ([results](results.md#stage-4b-result-moe-g4-s12-becomes-base-v3-2026-10-27)) |
+| 4c | canon (kernel 7, mode x layer set), on the MoE base | **running** 2026-10-27: sites a, c, ac, abc, wall-clock matched to base v3 ([results](results.md#stage-4c-launched-canon-on-base-v3-2026-10-27)) |
 | 4e | Loopie and Huginn | held: loop designs undecided; Loopie needs PR #158 |
 | 5 | greedy ladder + light leave-one-out, with the stage-2 knobs re-checked (AdamW-group LR 1e-2, wd 1e-5) | after 4b/4c; no Tier 2a/2c arm qualifies for it |
 | 6 | second-scale check | struck by team decision |
