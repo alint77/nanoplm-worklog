@@ -1138,3 +1138,61 @@ would reach only the shared expert and the two leading dense layers.
 Steps are base v3's own budget (10287 + 1583) divided by f, so each arm gets the
 same wall-clock as base v3. An arm is adopted only if its decayed loss beats base
 v3 (2.0752) by more than 0.0019.
+
+## Stage 4c at canon LR 1e-4: no arm beats base v3, and the canon LR was never tuned (2026-10-28)
+
+**Result of the four arms as launched** (canon conv weights at AdamW 1e-4, see
+below; matched wall-clock; base v3 2.1134 at trunk end, 2.0752 decayed):
+
+| arm | f | trunk eval | decayed eval | decayed - base v3 | equal-step gap at 5000 |
+|---|---|---|---|---|---|
+| a | 1.035 | 2.1185 | 2.0799 | +0.0047 | +0.0042 |
+| c | 1.033 | 2.1162 | 2.0781 | +0.0029 | +0.0014 |
+| ac | 1.105 | 2.1259 | 2.0875 | +0.0123 | +0.0032 |
+| abc | 1.164 | 2.1330 | 2.0952 | +0.0200 | +0.0046 |
+
+Every arm loses, and it loses **at equal steps too**, so this is not only canon's
+step-time cost. The gap at equal steps grew from step 2000 on.
+
+**Why: the canon weights sat in the AdamW group at 1e-4.** The canon conv is
+depthwise, weight `(C, 1, 7)`, so it is 3D and not a routed expert, and
+`optim.py`'s fallthrough sends it to the AdamW group at `adam_learning_rate`
+(1e-4, the embedding/norm LR that was never tuned for anything else; the
+Tier 1 sweep put that group's plateau at 1e-3 to 1e-2). Its init is PyTorch's
+default (kaiming-uniform), untouched by the model's init, so every canon site
+started as a random depthwise filter on the residual stream and learned slowly.
+AdamW is the right optimizer for it: a depthwise filter is not a linear map
+between channel spaces, so Muon's orthogonalization has nothing to work with
+(flattened it couples 1024 independent filters; batched per channel it reduces
+to normalizing a 1x7 row). The 4c design also skipped the per-variant LR sweep
+that method.md asks for inside an architecture tier. That was a miss.
+
+**Tree v2c** (`pkgs/nanoplm-v2c`, frozen 2026-10-27) is tree v2 plus one knob,
+`pretraining.canon_learning_rate`: when set, the canon conv weights and biases
+get their own AdamW group at that LR (same wd/betas/eps); unset, the param
+groups are exactly tree v2's. Patch in `pkgs/nanoplm-v2c.patch`.
+
+**Canon LR sweep on arm c** (fixed step 5000, constant LR, same seed and data
+order as `canon3-c`, which supplies the 1e-4 point; jobs 2552996-2552998):
+
+| step | 1e-4 | **1e-3** | 3e-3 | 1e-2 | base v3 |
+|---|---|---|---|---|---|
+| 3000 | 2.2538 | **2.2515** | 2.2523 | 2.2579 | 2.2532 |
+| 4000 | 2.2204 | **2.2179** | 2.2188 | 2.2253 | 2.2186 |
+| 5000 | 2.1938 | **2.1918** | 2.1939 | 2.2005 | 2.1924 |
+
+1e-3 wins at every eval and is interior to the grid. Tuned, canon C is still only
+-0.0006 against base v3 at equal steps, well inside 2 x sigma_seed, before its
+3.3% step-time cost.
+
+**Follow-ups in flight** (all tree v2c, canon LR 1e-3, wall-clock matched to base
+v3, decays chained):
+
+| run | what | steps | trunk / decay job |
+|---|---|---|---|
+| `canon3c-clr1e-3-long` | the sweep winner continued from step 5000 | 9959 + 1532 | 2559576 / 2559578 |
+| `canon3-b` | B alone (4c only had B inside abc); f_b = 1.088 measured A-B-A (job 2557945, base3 drift 0.35%) | 9452 + 1454 | 2558419 / 2558420 |
+| `canon3-ac-clr1e-3` | AC at the tuned LR | 9307 + 1432 | 2561767 / 2561768 |
+
+The LR was swept on C only; that it transfers to A and B is assumed, not shown.
+Win rule unchanged: decayed loss below 2.0733.
