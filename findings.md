@@ -2305,3 +2305,51 @@ found the partial `embeddings_file_<name>.h5` and tried to write into it. Move
 the stale `embeddings_file_*`, `reduced_embeddings_file_*` and per-arm
 framework directories aside before rerunning (done for the paired-head
 re-evals, `eval/out/stale-*`).
+
+### g7-S12 weight NaN (2026-10-27): optimizer, NCCL and stray-write audit (2026-10-28)
+The 4b `g7-S12` run (job 2530502) died at step 7212 with a new signature: step
+7211 had a finite loss and a finite global grad norm, but after its optimizer
+step `layers.3.mlp.Wo` (the 2nd MoE layer) was non-finite, on rank 4 only (FSDP
+Shard(0) on experts, so a handful of experts). September's caught event was the
+reverse: finite weights, NaN activations. Same rate family (about one event per
+30-40k MoE steps). Scripts in the session job dir `tmp/nmx/` (t1-t5).
+
+- **NorMuon / orthogonalizer: cleared.** Experts are batch-sharded, so dion runs
+  them locally (`process_group=None`); one GPU reproduces the per-rank math. The
+  bf16 polar-express normalizes singular values to at most 0.996 on every
+  adversarial input (rank-1, spikes, single row/col, 1e-36..1e37); its polynomial
+  only blows up past ~1.015. Full `dion.NorMuon` at the exact rank-4 stacks
+  ([30,6,384,1024], [30,6,1024,768]) for 1500 steps plus dormant experts, dead
+  rows, rank-1 spikes, scale whiplash, denormals, empty shards: all finite. The
+  3D batched update equals per-slice 2D NorMuon to 7e-9. Only failure: a single
+  3.3e38 grad element overflows momentum, which the grad-norm guard would skip.
+  Silent non-NaN quirk: momentum Frobenius > ~1.8e19 gives an exactly-zero update.
+- **No custom NCCL on the MoE path.** All explicit collectives are host-side
+  bookkeeping; the MoE one all-reduces expert counts into `correction_bias` (a
+  buffer). Weights/grads are plain FSDP2; Dion's async all-to-alls (2D params only)
+  hold buffers until `wait()`. No private streams in nanoplm, sonicmoe or quack.
+- **Hazards found, not the cause:** an all-NaN router row yields index 83, which
+  sonicmoe's metadata histogram and the cutlass dispatch would write OOB with; the
+  training clamp precedes both (and October had no NaN loss first). The clamp
+  fixes indices but not the kernel's counts (harmless, they skip 83).
+- **memcheck cannot see near overruns on this system.** compute-sanitizer
+  2025.3 / driver 610.57 on GH200 flags writes to unmapped memory but missed an
+  off-by-one into the adjacent cudaMalloc block, with and without `--padding`,
+  in both a CUDA C and a Triton control. Its clean runs (router, Dion step,
+  sonicmoe layer) therefore only exclude wild writes.
+- **Sentinel stray-write test** (caching allocator on, bystander tensors with a
+  sentinel pattern interleaved through the allocator, checked after every pass;
+  catches the off-by-one control): **sonicmoe and cutlass MoE layers at g7-S12
+  shapes, 200 fwd+bwd each under adversarial routing (collapse onto 6 experts with
+  77 empty, one hot expert, padding, odd T): no stray writes.**
+- **Hardware SDC is unlikely as a uniform cause:** 0 events in 392 dense
+  run-hours vs ~1 per 23 MoE run-hours.
+- **Side finding (not the NaN):** experts are stored `(E, in, out)`, transposed vs
+  `nn.Linear`; dion assumes `(out, in)`. Measured: expert `Wo` updates are 0.375x
+  and `Wi` 1.33x what `nn.Linear` layout would get (direction unchanged), and
+  NorMuon normalizes per input unit instead of per output neuron. Affects every
+  MoE run including base v3; fix needs a new tree and re-baseline.
+
+**Open:** a compiled-kernel or NCCL-internal fault only present in the full
+16-GPU compiled run. Next step is an always-on tripwire in MoE runs (post-step
+weight finite check, expert-state checksums across fwd/bwd, in-memory rollback).
