@@ -1136,7 +1136,7 @@ embeddings directly, has no such artifact:
 | g4-S12 (base v3) | 0.5058 | 0.2301 | 0.2258 |
 | g7-S8 | 0.5112 | 0.2235 | 0.2040 |
 
-selected_protein is the deciding readout; casp14/15 are small (~20 proteins each)
+selected_protein is the deciding readout; casp14/15 are much smaller sets (92 and 84 sequences vs 1384)
 and move both ways. Zero-shot contact stays in the battery but is not read as a
 quality signal for MoE arms.
 
