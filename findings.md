@@ -2379,3 +2379,15 @@ Validation:
 Job **2569497** `dbg-g7-S12-trip`: g7-S12, same seed and LR, layer metrics every
 step, checkpoints every 2000 steps, 12h, wandb project `nanoplm-debug`, config
 `configs/dbg-g7-S12-trip.yaml`.
+
+
+**Second occurrence, a different MoE shape (2026-10-29).** The 4c arm `canon3-b`
+(job 2558419; base3 MoE: E=47, top-3, inter 672, sonicmoe; tree v2c, canon B @1e-3)
+aborted at step 7239 after 5h22m:
+- weights non-finite while loss and grad norm were finite (last log, step 7220:
+  loss 2.1444, grad_norm 0.103);
+- first bad param `model.layers.2.mlp.Wo` (the first MoE layer), on rank 9 only.
+
+Same signature as g7-S12: an expert `Wo`, one rank, with no skip or warning first.
+Decay 2558420 was cancelled by the dependency. Earlier deaths were at steps
+5790, 9799, 16180 and 7212, so not a fixed data batch.
