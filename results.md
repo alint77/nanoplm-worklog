@@ -1107,9 +1107,38 @@ for the cells with more experts (g4-S8 -0.031, g4-S12 -0.052, g7-S8 -0.057). The
 zero-shot probe reads contacts off the categorical Jacobian (substitute residue i,
 watch the logits at j); our hypothesis is that a substitution can flip the router's
 expert choice at other positions, which adds noise to the Jacobian that has nothing
-to do with contacts. Untested. It does not change the pick (the protocol ranks on
-loss), but zero-shot contact should not be read as a quality signal for MoE
-models without checking this.
+to do with contacts. It does not change the pick (the protocol ranks on loss).
+
+**Tested 2026-10-28: most of the zero-shot drop is the probe, not the model.**
+`diag/zs_contact/zs_contact_check.py` re-runs the battery's probe (same wrapper,
+same conversion and metric, 69 selected_protein dev proteins) with every router
+pinned to the expert set it picked for the wild type; combine weights are still
+recomputed from the mutant's scores over that set. It reproduces the battery on
+dense (s42 0.4809 vs 0.4811, s43 0.4691 vs 0.4690) and on MoE (default mode below).
+
+| decayed ckpt | default | routing frozen | tokens whose expert set flips |
+|---|---|---|---|
+| dense s42 / s43 | 0.4809 / 0.4691 | n/a | n/a |
+| g4-S12 (base v3) | 0.4235 | 0.4638 | 5.8% |
+| g7-S8 | 0.4176 | 0.4550 | 10.2% |
+
+Freezing recovers 0.040 of g4-S12's ~0.052 gap and 0.037 of g7-S8's ~0.057; the
+cell with more route flips loses more. What remains (about -0.01 to -0.02 against
+the dense pair) is inside the range a smoother-than-dense Jacobian would give and
+is not chased further. Identity rows (mutant = wild type) are exactly zero in every
+mode, so there is no batch/kernel noise term. Supervised contact, which reads the
+embeddings directly, has no such artifact:
+
+| supervised long P@L, decayed | selected_protein | casp14 | casp15 |
+|---|---|---|---|
+| dense 3-seed mean | 0.5003 | 0.2295 | 0.2180 |
+| g4-S8 | 0.5030 | 0.2309 | 0.2143 |
+| g4-S12 (base v3) | 0.5058 | 0.2301 | 0.2258 |
+| g7-S8 | 0.5112 | 0.2235 | 0.2040 |
+
+selected_protein is the deciding readout; casp14/15 are small (~20 proteins each)
+and move both ways. Zero-shot contact stays in the battery but is not read as a
+quality signal for MoE arms.
 
 **New eval stack.** Tree v2 requires biotrainer 2.1.1 (`pydeps-bt211`), whose dev
 mode is defined by a `pbc_dev_mode` column in a new PGYM reference file, so the
