@@ -1086,7 +1086,8 @@ a finite loss and a finite gradient, so the update itself overflowed, not the
 forward. The run had no periodic checkpoints, its decay was cancelled by the
 afterok chain, and stage 4c was told to exclude it (`FOURC_EXCLUDE`, amendment
 2026-10-27). Root cause unknown; the suspect is the batched NorMuon update on the
-3D expert weights (layer 3 is the first MoE layer). It is the largest expert count
+3D expert weights (layers 0-1 are dense, so layer 3 is the second MoE layer; the bad
+slice was on rank 4 only, i.e. a handful of experts, not the whole tensor). It is the largest expert count
 (83) we have run. The same update path runs in base v3 and the canon arms, so the
 risk is not zero there either.
 
