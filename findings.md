@@ -2353,3 +2353,29 @@ reverse: finite weights, NaN activations. Same rate family (about one event per
 **Open:** a compiled-kernel or NCCL-internal fault only present in the full
 16-GPU compiled run. Next step is an always-on tripwire in MoE runs (post-step
 weight finite check, expert-state checksums across fwd/bwd, in-memory rollback).
+
+**Tripwire run (2026-10-28).** Tree `nanoplm-v2t` = v2 + `pretraining.debug_tripwire`
+(patch `pkgs/nanoplm-v2t.patch`). Every optimizer step it:
+- **before the step:** takes `foreach_norm` of every local param shard and
+  optimizer-state tensor and compares it bit-for-bit with the previous post-step
+  value. A mismatch means a stray write during fwd/bwd; it diffs that tensor
+  against the host snapshot, recording which elements changed, old and new values
+  and raw bits.
+- **after the step:** checks every norm is finite and NorMuon `variance_neuron`
+  and AdamW `exp_avg_sq` are >= 0, decided globally with one all_reduce.
+- **no trip:** copies params and state (plus dion's group `step`) to pinned host.
+- **trip:** dumps the snapshot, grads and bad state of the flagging rank(s) to
+  `<run>/tripwire/`, rolls every rank back from the snapshot (verified bit-exact)
+  and skips the step.
+
+Validation:
+- Single-GPU unit test: every fault kind trips (stray NaN, stray finite +1,
+  NaN momentum after the step, negative V). The post-rollback trajectory matches
+  a run that skipped those steps to 1.5e-8, which is NorMuon's own run-to-run
+  noise.
+- Full-pipeline smoke on 1 GPU (FSDP, compiled, 4-layer g7-S12): the 4 injected
+  faults trip and roll back, with 0 false trips over 26 clean steps.
+
+Job **2569497** `dbg-g7-S12-trip`: g7-S12, same seed and LR, layer metrics every
+step, checkpoints every 2000 steps, 12h, wandb project `nanoplm-debug`, config
+`configs/dbg-g7-S12-trip.yaml`.
