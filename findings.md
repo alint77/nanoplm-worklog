@@ -2391,3 +2391,41 @@ aborted at step 7239 after 5h22m:
 Same signature as g7-S12: an expert `Wo`, one rank, with no skip or warning first.
 Decay 2558420 was cancelled by the dependency. Earlier deaths were at steps
 5790, 9799, 16180 and 7212, so not a fixed data batch.
+**Root cause: our compiled bf16 Polar Express diverges on a dormant expert (2026-10-29).**
+The tripwire run 2569497 tripped once, at step 5696 on rank 6, and rolled the step back.
+The dump (`checkpoints-dbg/dbg-g7-S12-trip-2569497/tripwire/trip1_step5696_rank6.pt`) shows:
+- **between steps:** pre-step checksums matched, so nothing wrote to params or state;
+- **in one `optimizer.step()`:** `layers.3.mlp.Wo` expert 4 went from absmax 0.85 to
+  5.1e7, and its NorMuon `variance_neuron` from ~1e-3 to 2.1e19. The other five local
+  experts updated normally;
+- **its momentum** was ordinary for a near-dormant expert: Frobenius 1.9e-6,
+  cond 1.7e10.
+
+Replayed offline:
+- nanoplm's `_polar_express_paper` (`torch.compile`d, bf16, 8 iterations, 1.01 safety)
+  returns entries ~1e9 for this matrix at 53 of 241 input scales between 1.00x and
+  1.12x, and the transposed matrix fails at exactly the same scales;
+- the same code run eager, dion's Polar Express, dion's quintic NS and Gram
+  Newton-Schulz all stay bounded on it.
+
+Per-iteration tracing explains it. The early polynomials push the top singular value
+to ~1.9-2.0, the edge of what the later ones pull back. Compiled and eager differ
+only by bf16 rounding, and the compiled path crosses the edge
+(sigma 1.99 -> 1.75 -> 1.85 -> 3.46 -> 133).
+
+This explains both NaN signatures: the weight NaN directly, and the September
+activation NaN as the next forward on 5e7 weights. Two caveats:
+- the expert layout bug (PR #170) is not involved, since NS on M and on M^T is
+  the same math;
+- the trigger is rare: 233k other real expert momenta from three checkpoints gave
+  no blowup.
+
+**Decision (user):** make Gram Newton-Schulz the default orthogonalizer
+(`muon_use_gram_newton_schulz: true`, overriding `muon_use_polar_express`). Branch
+`feat/gns-default`, dion pinned to upstream main 7692479, gram-newton-schulz 0.1.6.
+It is also the fastest option on our shapes: 5.0 vs 8.8 ms on a 192 x 1024 x 384 batch.
+
+GNS is a looser orthogonalizer: 5 iterations, fp16, singular values 0.85-1.12
+against ~1.00 for ours. **So it changes the dense optimizer too, and dense base v2
+(Polar Express) is no longer a clean control for the MoE redo.** The redo runs its own
+dense GNS control.
