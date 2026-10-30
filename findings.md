@@ -2501,3 +2501,59 @@ that made Polar Express blow up.
 **4. Total grad norm** at step 5000 is 15-30% higher in v3 MoE (g4 0.106 vs 0.091,
 g7 0.116 vs 0.088). That comes from the expert Wi and the shrunken early-layer
 weights, not from instability (zero non-finite skips, no spikes).
+
+### Deeper debug-metric comparison, and which change causes what (2026-10-30)
+
+Script: sep07_abl/tools/plot_v3_debug_deep.py (same histories; muon LR 2e-2).
+
+**The early-layer shrink is GNS, not a knock-on effect of the layout fix.**
+- The dense model has no routed experts, so the layout fix changes nothing in it. Yet it shows the identical layer-0 shrink (Wqkv 0.53x in dense, g4 and g7).
+- The low rank is a property of the data, not of the new tree. The old Polar Express dense run (base2-seed43, step 13000) has the same near-low-rank layer-0 momentum: 23 singular values above 1% of the largest, the same as v3.
+- Run through each orthogonalizer, that old momentum gives the same 10x gap: update energy 0.226 with PE vs 0.027 with GNS (v3 momentum: 0.230 vs 0.024).
+- Muon-style updates normalize away gradient magnitude, so changed gradient flow from deeper layers could only shift direction and spectrum, not update size.
+
+![ratio maps](figures/treev3-ratio-maps.png)
+
+**Ratio maps (log2 new/old, per layer and parameter type).**
+- **Weights:** two effects only. The early-layer GNS shrink (layers 0-2, all models) and the routed-expert shift, which is uniform across depth (g4 Wi 1.23x, Wo 1.49x; g7 Wi 0.73x, Wo 2.64x). Everything else is within a few percent: attention, shared experts, routers, norms.
+- **Grads (mean over steps 3000-5000):**
+  - Routed Wo grads are lower (g7 about 0.4x), routed Wi grads higher, each the mirror of the other weight's change.
+  - Dense-MLP grads in layers 0-1 are about 2.5x, following the halved weights.
+  - Shared-expert grads in layers 2-3 (the first two MoE layers) are about 3x in both g4 and g7. Observed only; not explained.
+
+![depth profiles](figures/treev3-depth.png)
+
+**Routed vs shared expert (one routed expert's Frobenius norm / the shared expert's).** The shared expert has the same shape as a routed expert and is an nn.Linear, so it always had the correct LR scale:
+
+| | old Wi | old Wo | v3 Wi | v3 Wo |
+|---|---|---|---|---|
+| g4 | 0.91 | 0.77 | 1.11 | 1.13 |
+| g7 | 1.59 | 0.45 | 1.17 | 1.17 |
+
+- Under the old layout, routed experts were mis-sized relative to an identical-shape MLP, worst in g7 (Wo at 0.45x).
+- In v3 both shapes land at about 1.1-1.2x the shared expert, for Wi and Wo alike. That is the cleanest confirmation that the layout fix did what it should.
+
+**Residual stream.**
+- Dense is unchanged.
+- In the MoE models the residual RMS grows faster with depth in v3: final block g4 1580 vs 1130, g7 1320 vs 1110. That follows from the larger routed-expert output projection.
+- Logits (abs max 27, entropy 1.51-1.52) and the final-norm RMS are unchanged.
+
+**Routing by depth.** Load entropy is lowest in MoE layers 5-8 in every run.
+- g7 v3 matches old g7.
+- g4 v3 dips further there (0.969 vs 0.980 at layer 5); from layer 12 on, all are 0.995 or higher.
+- The 4b trunks will show whether the g4 dip grows.
+
+**NorMuon normalizer (checkpoint optimizer state, variance_neuron).**
+- v3 per-row scales are flat: max/median at most 1.1x for Wo, p99 2.2x and max 2.7x for Wi, with no row above 5x in either shape.
+- The old g7 checkpoint had a 37.7x outlier on dormant intermediate units.
+- Old g4 was flat too (1.0-1.1x), consistent with g4 being the less affected shape.
+- No dormant experts in v3 (0 of 1410 g4 and 0 of 2490 g7 expert slices below 0.5x the median norm).
+
+![old g7 before its NaN](figures/treev3-oldg7-nan.png)
+
+**The old g7 NaN had no precursor in any logged metric.** The original moe2-g7-S12
+went non-finite at step 7212 (the tripwire rerun tripped at 5696). Up to step 7200
+its loss, grad norm, routing balance and expert norms are all smooth. That fits the
+root cause: one bad Polar Express output on one dormant expert, not a slow drift.
+So clean metrics at step 5000 cannot prove safety; only running past the old
+failure steps can (the 4b trunks, watched for non-finite skips).
