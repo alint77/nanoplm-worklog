@@ -2572,7 +2572,7 @@ Plot: `tools/plot_4b_v3_vs_old.py`.
 - **Dense: no change.** New minus old is +0.0 to +1.3e-3, mostly +0.5e-3,
   against an old 2-seed spread of 0.4-0.9e-3. GNS costs dense nothing visible.
 - **MoE: new starts worse and ends better.** Every MoE arm is 1.7-5.6e-3 worse
-  at step 1000 (lower LR for g4, looser GNS orthogonalization early), crosses
+  at step 1000 (likely the lower LR; not separated from GNS), crosses
   zero around 2000-3500, and is ahead from then on:
   g4-S8 -0.9 to -1.9e-3, g4-S12 -3.2e-3 at 7500, g7-S8 -2.0 to -2.6e-3,
   g7-S12 -2.9 to -3.3e-3. The gain is still growing for g4-S12 and g7-S12.
