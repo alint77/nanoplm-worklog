@@ -2557,3 +2557,27 @@ its loss, grad norm, routing balance and expert norms are all smooth. That fits 
 root cause: one bad Polar Express output on one dormant expert, not a slow drift.
 So clean metrics at step 5000 cannot prove safety; only running past the old
 failure steps can (the 4b trunks, watched for non-finite skips).
+
+### 4b trunks on tree v3 against the old 4b trunks, mid-run (2026-10-30, 19:40)
+
+![treev3 4b trunks vs old](figures/treev3-4b-trunks-vs-old.png)
+
+Snapshot while the moe3-* trunks are still running (dense at 10000, g4 at 7500,
+g7 at 6000-6500 of their budgets). Old = moe2-* (tree v2, Polar Express, old
+expert layout, muon LR 2e-2 for every arm) and, for dense, base2 seeds 43/44.
+New = tree v3 (GNS + layout fix) at the per-arm LRs from the lr3 sweep. So the
+MoE gap mixes three changes (GNS, layout, LR); dense isolates GNS alone.
+Plot: `tools/plot_4b_v3_vs_old.py`.
+
+- **Dense: no change.** New minus old is +0.0 to +1.3e-3, mostly +0.5e-3,
+  against an old 2-seed spread of 0.4-0.9e-3. GNS costs dense nothing visible.
+- **MoE: new starts worse and ends better.** Every MoE arm is 1.7-5.6e-3 worse
+  at step 1000 (lower LR for g4, looser GNS orthogonalization early), crosses
+  zero around 2000-3500, and is ahead from then on:
+  g4-S8 -0.9 to -1.9e-3, g4-S12 -3.2e-3 at 7500, g7-S8 -2.0 to -2.6e-3,
+  g7-S12 -2.9 to -3.3e-3. The gain is still growing for g4-S12 and g7-S12.
+- **MoE advantage over dense at 6000** grows in every arm: g4-S8 41.2 -> 42.8,
+  g4-S12 48.0 -> 50.4, g7-S8 43.7 -> 46.2, g7-S12 51.1 -> 54.1 (x1e-3). The
+  ranking is unchanged: g7-S12 > g4-S12 > g7-S8 > g4-S8.
+- **Stability.** No non-finite step in any trunk. g4 arms are past 7500; the
+  g7 arms (where old g7-S12 died at 7212) are not there yet.
