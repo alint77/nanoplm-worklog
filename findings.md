@@ -2451,3 +2451,53 @@ sweep (jobs 2576771-90, 2579198, dense 2e-2 in hold 2569497).
 - **g7-S12:** v3 is better by 2-3e-3 at every eval from step 1500. g7 had the worst-scaled experts under the old layout (Wo at 0.375x of its LR).
 - **Tuned LR:** MoE optima moved down from 2e-2 (g4 1e-2, g7 1.41e-2). That adds -1.8e-3 (g4) and -0.5e-3 (g7) on top of the matched-LR change.
 - **Stability and speed:** all 12 v3 runs were clean, with zero non-finite skips. But they stop at 5000 steps, before the old g7 NaN at 5696; the 4b redo trunks (moe3-*, ~10k steps) are the real test. Step time: dense unchanged, MoE 1-1.5% slower (ovh5 vs ovh3 factors).
+
+### Debug metrics: what tree v3 changed inside the model (2026-10-30)
+
+Same runs as above (muon LR 2e-2, steps <= 5000), read from the offline wandb
+histories (LayerwiseDebugTracker, every 20 steps). Script: sep07_abl/tools/plot_v3_debug.py.
+
+![debug metrics](figures/treev3-debug-metrics.png)
+
+**1. Routed expert weight norms moved exactly as the layout fix predicts.** The
+new/old norm ratio at step 5000 equals the ratio of the corrected to the old
+spectral-norm LR scale, sqrt(fan_out/fan_in) with the axes swapped:
+
+| | Wi new/old (predicted) | Wo new/old (predicted) |
+|---|---|---|
+| g4 (I=672) | 1.22 (1.31) | 1.48 (1.52) |
+| g7 (I=384) | 0.73 (0.75) | 2.63 (2.67) |
+
+So under the old layout g7's expert Wo trained at 0.375x its intended LR, and Wi
+at 1.33x. Shared experts, routers and attention are unchanged (ratios 0.99-1.01).
+Knock-on effects:
+- Expert Wo gradients are smaller (g4 0.67x, g7 0.41x), and expert Wi gradients larger (g7 1.5x).
+- The residual stream RMS is larger in the MoE blocks (g4 about 1.4x, g7 about 1.2x in blocks 8-31).
+- Logits and the final norm are unchanged.
+
+**2. GNS shrinks the first three layers, in all three models.** At step 5000:
+- layer 0 Wqkv is 0.53x and layer 0 dense-MLP Wi is 0.45x;
+- layers 1 and 2 are 0.6-0.85x;
+- layers 8-31 are 0.95-1.0x.
+
+The pattern is identical in dense, g4 and g7, so it is the orthogonalizer, not
+MoE. The cause, checked on the lr3-dense-2e-2 step-5000 momentum (login GH200):
+- The early-layer momentum is close to low-rank. The input is a 32-token vocabulary, so only 23 (layer 0 Wqkv) to 35 (layer 0 Wi) singular values are above 1% of the largest.
+- Polar Express (8 iterations) pushes those weak directions up toward 1. GNS (5 iterations, fp16) leaves them small.
+- The update energy ||O||_F^2 / r, PE vs GNS: layer 0 Wqkv 0.23 vs 0.024; layer 0 Wi 0.42 vs 0.22; layer 2 Wqkv 0.87 vs 0.43; deep layers 1.00 vs 0.95-0.98.
+
+So GNS makes much smaller updates in exactly the directions that are mostly
+noise. It costs nothing measurable in loss (dense +1e-3, inside seed noise).
+This is the same behavior that keeps GNS bounded on the dormant-expert momentum
+that made Polar Express blow up.
+
+**3. Routing:**
+- **No dead experts in any run, and aux loss is unchanged.**
+- **Router z-loss is lower in v3:** g4 7.3 vs 9.1, g7 7.8 vs 8.3.
+- **g7 balance is slightly better:** max expert load fraction 3.6% vs 4.5%.
+- **g4 balance is slightly worse:** the minimum per-layer load entropy is 0.956 vs 0.974, and the max expert fraction is 7.4% vs 5.3% (uniform is 6.4% for top-3 of 47). The worst layers are MoE layers 2-7 (entropy -0.026 at layer 4); later layers are identical.
+- g4 eval loss is unchanged, so the balance shift is not costing anything yet. Watch it in the 4b redo (moe3-g4-*), which runs twice as long.
+
+**4. Total grad norm** at step 5000 is 15-30% higher in v3 MoE (g4 0.106 vs 0.091,
+g7 0.116 vs 0.088). That comes from the expert Wi and the shrunken early-layer
+weights, not from instability (clip at max_grad_norm never mattered, zero skips).
