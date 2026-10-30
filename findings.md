@@ -2429,3 +2429,25 @@ GNS is a looser orthogonalizer: 5 iterations, fp16, singular values 0.85-1.12
 against ~1.00 for ours. **So it changes the dense optimizer too, and dense base v2
 (Polar Express) is no longer a clean control for the MoE redo.** The redo runs its own
 dense GNS control.
+
+## Tree v3 against the older Polar Express runs, 5000 steps (2026-10-30)
+
+Tree v3 (expert layout fix #170 + GNS default #171) against the old runs at the
+same muon LR 2e-2, eval loss on each run's own steps. Old dense = base v2 at
+three seeds (t2a-ropeB-m92, base2-seed43/44); old MoE = the stage 4b trunks
+moe2-g4-S12 / moe2-g7-S12 (tree v2, Polar Express, old layout). New = the lr3
+sweep (jobs 2576771-90, 2579198, dense 2e-2 in hold 2569497).
+
+![tree v3 vs old](figures/treev3-vs-old.png)
+
+| arm | old @5000 (LR 2e-2) | v3 @5000 (LR 2e-2) | v3 best LR @5000 |
+|---|---|---|---|
+| dense | 2.2345 / 2.2352 / 2.2356 | 2.2359 | 2.2345 @ 2.83e-2 (edge; user fixed 2e-2) |
+| g4-S12 | 2.1924 | 2.1924 | 2.1906 @ 1e-2 (1.41e-2: 2.1908) |
+| g7-S12 | 2.1901 (went NaN at 5696) | 2.1871 | 2.1866 @ 1.41e-2 |
+
+- **Dense:** GNS costs about +0.001, at the top of the old three-seed range (1.1e-3 wide). Within noise, slightly worse early on.
+- **g4-S12:** identical at matched LR, within ±1e-3 the whole way. The layout fix moved g4's expert LR scale only modestly (0.66x / 0.76x before), and GNS cancels whatever that gained.
+- **g7-S12:** v3 is better by 2-3e-3 at every eval from step 1500. g7 had the worst-scaled experts under the old layout (Wo at 0.375x of its LR).
+- **Tuned LR:** MoE optima moved down from 2e-2 (g4 1e-2, g7 1.41e-2). That adds -1.8e-3 (g4) and -0.5e-3 (g7) on top of the matched-LR change.
+- **Stability and speed:** all 12 v3 runs were clean, with zero non-finite skips. But they stop at 5000 steps, before the old g7 NaN at 5696; the 4b redo trunks (moe3-*, ~10k steps) are the real test. Step time: dense unchanged, MoE 1-1.5% slower (ovh5 vs ovh3 factors).
