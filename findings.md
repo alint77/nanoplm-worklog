@@ -2500,4 +2500,4 @@ that made Polar Express blow up.
 
 **4. Total grad norm** at step 5000 is 15-30% higher in v3 MoE (g4 0.106 vs 0.091,
 g7 0.116 vs 0.088). That comes from the expert Wi and the shrunken early-layer
-weights, not from instability (clip at max_grad_norm never mattered, zero skips).
+weights, not from instability (zero non-finite skips, no spikes).
