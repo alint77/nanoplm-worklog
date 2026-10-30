@@ -567,6 +567,47 @@ Three things to get right when it is set up:
 30 min is about 8% of a run, against the usual WSD practice of 10 to 20%. Worth
 revisiting now that it is no longer locked to the stable runs.
 
+## Side ablation: Ling-style routing on g7-S12 (2026-10-30)
+
+Our router is a hybrid: Ling-V2 machinery (sigmoid scores, fp32 router,
+zero-mean expert bias, z-loss) bolted onto the defaults of the first MoE commit
+(proportional bias step, soft aux loss 0.01, z-loss 5e-5, routed scale 1.0).
+These arms ask whether the actual Ling-mini-2.0 / DeepSeek-V3 recipe does
+better, and what the routed scale should be.
+
+Tree v4 = tree v3 + `moe_bias_update_mode` (`pkgs/nanoplm-v4.patch`). The
+default, `proportional`, is bit-identical to v3. `sign` is Ling-V2's
+`--bias-zero-mean-update`: every expert's bias moves by a fixed +-1e-3 toward
+balance, then the vector is recentered.
+
+All arms are g7-S12 (83 experts, top-6, 1 shared, width 384), muon LR 1.41e-2,
+5000 fixed steps, against `lr3-g7-S12-1.41e-2` (job 2576789, eval 2.1866 @5000).
+Configs derive from `configs/ling-base-g7-S12.yaml` (the baseline with the
+v4 defaults spelled out).
+
+| arm | bias step | aux loss | z-loss | routed scale | job |
+|---|---|---|---|---|---|
+| baseline | proportional | 0.01 | 5e-5 | 1.0 | 2576789 |
+| ling-g7-S12-s1 | sign | 0 | 3.5e-6 | 1.0 | 2596677 |
+| ling-g7-S12-s2.5 | sign | 0 | 3.5e-6 | 2.5 (Ling, DSv3) | 2596678 |
+| ling-g7-S12-s6 | sign | 0 | 3.5e-6 | 6 (= top-k) | 2596679 |
+
+`s1` vs baseline isolates the balancing recipe; `s1 -> s2.5 -> s6` is the
+routed-scale sweep on top of it. Scale 6 makes the routed branch's combine
+weights sum to 6 rather than 1, so each routed expert enters the residual at
+the same weight as the shared expert.
+
+Not copied from Ling: group-limited routing (`n_group 8 / topk_group 4` exists
+for node-limited dispatch, and 83 experts do not split into equal groups) and
+`first_k_dense 1` (we keep 2 leading dense layers, so the compute match holds).
+
+**Decision rule, fixed before results.** The 3 dense base2 seeds span 1.1e-3
+at step 5000. An arm counts as better than baseline only if it is lower by
+more than 2e-3. A win at 5000 steps then needs a full ovh5-budget run with
+decay before it is adopted. Caveat: the muon LR was tuned at scale 1, and the
+routed scale changes the effective step size of the routed experts, so a loss
+at scale 6 may be an LR mismatch rather than a bad scale.
+
 ## Budget
 
 Pre-roadmap budget, kept for the record; the roadmap above is current.
