@@ -608,6 +608,19 @@ decay before it is adopted. Caveat: the muon LR was tuned at scale 1, and the
 routed scale changes the effective step size of the routed experts, so a loss
 at scale 6 may be an LR mismatch rather than a bad scale.
 
+**LR sweep per scale (added 2026-10-30, at the user's request).** Each scale
+also runs at muon LR 7.07e-3, 1e-2 and 2e-2 (the 1.41e-2 point is the arm
+above), so scales are compared at their own best LR:
+
+| scale | 7.07e-3 | 1e-2 | 1.41e-2 | 2e-2 |
+|---|---|---|---|---|
+| 1 | 2596782 | 2596783 | 2596677 | 2596784 |
+| 2.5 | 2596785 | 2596786 | 2596678 | 2596787 |
+| 6 | 2596788 | 2596789 | 2596679 | 2596790 |
+
+Configs are `ling-g7-S12-s<scale>-lr<lr>`. If a scale's best point is at
+either edge of its grid, it gets one more point one sqrt(2) step beyond it.
+
 ## Budget
 
 Pre-roadmap budget, kept for the record; the roadmap above is current.
