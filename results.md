@@ -767,6 +767,43 @@ configuration. Attention is not a smaller share of a 4-node step.
 **Not adopted mid-series.** Reasoning in
 [decisions.md](decisions.md#measured-and-not-adopted).
 
+### On the MoE model: FA3 build x micro-batch (2026-10-31)
+
+Re-run on the production MoE arm `moe3-g7-S12` (tree v3, 4 nodes, 16 GPUs),
+crossed with a second question: does micro-batch 128 with attention-only
+activation checkpointing beat micro-batch 64? All 7 arms ran back to back on
+one allocation (job 2602448, `jpbo-084-[37-39,41]`), 300 steps each, same seed
+and data. Configs `mbab-g7-S12-*` (base `mbab-base-g7-S12.yaml`). Builds:
+stock = installed FA3 (md5 `c3a6d08f`), fork = `abx/fork` (`af86f68`, md5
+`d880c883`), fork + fwd flag = `abx/forkflag` (`FLASHATTENTION_SHORT_SEQ_TILES`,
+md5 `84db0afd`). Step time is the median of the logged 20-step windows from step
+60 on, dropping the two windows that contain an eval.
+
+![FA3 build x micro-batch on g7-S12](figures/mbab-g7s12-fa3-mb.png)
+
+| FA3 build | mb64 (GA 8) | mb128 + attn AC (GA 4) |
+|---|---|---|
+| stock | 2482 ms | 2614 ms (+5.3%) |
+| fork | 2436 ms (**-1.8%**) | 2546 ms (+2.6%) |
+| fork + fwd flag | 2432 ms (**-2.0%**) | 2537 ms (+2.2%) |
+| stock, repeated last | 2478 ms (-0.1%) | |
+| peak memory | 70.3 GB | 68.0 GB |
+
+- **The fork pays on the MoE model too, but less:** -1.8% vs +2.85% on the
+  dense base. Attention is a smaller share of an MoE step. The forward flag adds
+  another 0.2 points, the same size as the stock-vs-stock drift (-0.1%), so it
+  is not separately resolved.
+- **mb128 + attention AC loses with every build** (+2.2% to +5.3%). It frees
+  only 2.3 GB of peak memory, and recomputing attention costs more than the
+  halved launch count saves. mb64 stays.
+- **Loss is unaffected.** Eval loss at step 300 spans 2.5635-2.5655 across all
+  seven arms; stock vs its own repeat differs by 0.0012.
+
+**Not adopted mid-series**, same reasoning as the dense fork A/B (compute per
+step changes, so arms within the running series would no longer be
+wall-clock comparable). The fork + flag build is the candidate for the next
+series.
+
 ## Base v2: three seeds, 13k and the decay to 15k (2026-10-07)
 
 **Base v2** is the reference every later arm is compared against: the
