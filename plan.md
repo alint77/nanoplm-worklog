@@ -687,3 +687,22 @@ Say the word and any of these come in, 2 to 5 runs each.
 - sequence length 1024 instead of 512
 - warmup length (currently 250 steps at 4.19M tokens)
 - decay length and shape (currently 30 min, linear)
+
+**Full runs for s1 and s2.5 (added 2026-10-31, at the user's request).** Both
+continue from their own 5000-step checkpoint (`resume.mode: continue`) to the
+moe3-g7-S12 trunk budget, 9723 steps, then decay 1496 steps to 11219, the same
+as `moe3-g7-S12` + `moe3-g7-S12-decay` (2587908/09). Each at its own best LR from
+the sweep: s1 at 1.41e-2 (from 2596677), s2.5 at 1e-2 (from 2596786). Tree v4.
+A continue resume saves into the resumed run's dir, so each 5000 checkpoint was
+copied to `checkpoint-stable-end-s5000` first; the decay chain checks the
+trunk's stable-end is at step 9723 before decaying.
+
+| arm | trunk | decay | eval |
+|---|---|---|---|
+| ling-g7-S12-s1-long | 2604856 | 2604858 | 2604860 |
+| ling-g7-S12-s2.5-lr1e-2-long | 2604857 | 2604859 | 2604860 |
+| baseline moe3-g7-S12 | 2587908 (done, 2.1123 @9723) | 2587909 | 2604861 |
+
+Eval: dev battery (PGYM, both contact readouts, PBC supervised), bt211 stack,
+at s9723 and d11219, eval source = tree v4 (strict-loads v4 checkpoints).
+Compare eval loss at 9723 and after decay, and downstream, against the baseline.
