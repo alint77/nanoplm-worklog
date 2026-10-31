@@ -2581,3 +2581,37 @@ Plot: `tools/plot_4b_v3_vs_old.py`.
   ranking is unchanged: g7-S12 > g4-S12 > g7-S8 > g4-S8.
 - **Stability.** No non-finite step in any trunk. g4 arms are past 7500; the
   g7 arms (where old g7-S12 died at 7212) are not there yet.
+
+## Ling-style routing on g7-S12, scale and LR sweep (2026-10-31)
+
+![Ling g7-S12 scale x LR](figures/ling-g7s12-scale-lr.png)
+
+Plan: plan.md "Side ablation: Ling-style routing on g7-S12". Tree v4, g7-S12,
+5000 fixed steps. Ling arms = sign bias step, aux loss 0, z-loss 3.5e-6;
+baseline = `lr3-g7-S12-*` (proportional bias step, aux 0.01, z 5e-5, scale 1).
+Plot: `tools/plot_ling_g7s12.py`. No non-finite step in any of the 12 runs.
+
+Eval loss at step 5000:
+
+| recipe | 7.07e-3 | 1e-2 | 1.41e-2 | 2e-2 | best | vs baseline best |
+|---|---|---|---|---|---|---|
+| baseline | 2.1921 | 2.1876 | **2.1866** | 2.1871 | 2.1866 | |
+| Ling s1 | 2.1885 | 2.1852 | **2.1846** | 2.1850 | 2.1846 | -2.0e-3 |
+| Ling s2.5 | 2.1891 | **2.1879** | 2.1881 | 2.1899 | 2.1879 | +1.3e-3 |
+| Ling s6 | 2.1955 | **2.1938** | 2.1967 | 2.2017 | 2.1938 | +7.2e-3 |
+
+- **Scale 1 is lower at every LR**, by 3.6 / 2.4 / 2.0 / 2.1e-3. At the shared
+  optimum (1.41e-2) the gap is exactly 2.0e-3, so it does not clear the
+  pre-registered "more than 2e-3" bar. Four independent LRs all agreeing makes
+  the sign of the effect solid; its size at the optimum is at the noise bar.
+- **The s1 gap shrinks with training**: -3.2e-3 at 1500, -2.0e-3 at 5000 (same
+  LR). Over a full ovh5 budget plus decay it may close further.
+- **Larger routed scale is worse, and not because of LR.** s2.5 and s6 both
+  move their optimum down to 1e-2 (as expected: the scale multiplies the routed
+  experts' effective step), but even at their own best LR they lose 1.3e-3 and
+  7.2e-3. All optima are interior to the grid, so no edge extension is needed.
+- s1 changes three things at once (sign step, aux 0, lower z-loss); this sweep
+  does not say which one carries the gain.
+
+**Decision per the rule:** no arm clears the bar; nothing adopted yet.
+Scale stays 1. Whether s1 earns a full ovh5 run with decay is open.
